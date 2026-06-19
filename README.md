@@ -1,4 +1,4 @@
-# mesh — prebuilt CLI bundles (v1.1.0)
+# mesh — prebuilt CLI bundles (v1.1.0-6ba5e5a)
 
 Self-contained `mesh` + `meshl` bundles. Run on any **Bun** or **Node 18+**; no native
 binary, nothing to compile.
@@ -9,7 +9,8 @@ binary, nothing to compile.
 bun add -g github:shizlie/libTwoToOne        # or: npm i -g github:shizlie/libTwoToOne
 ```
 
-This puts `mesh` and `meshl` on your PATH. Re-run to update.
+This puts `mesh` and `meshl` on your PATH. Re-run to update — if it still looks stale, run
+`bun pm cache rm` first (Bun caches global git installs).
 
 ## Run the live agent demo (optional)
 
