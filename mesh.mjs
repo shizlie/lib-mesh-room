@@ -1041,22 +1041,61 @@ function upsertRoom(roomId, entry, home) {
   rooms[roomId] = entry;
   saveRooms(rooms, home);
 }
+function removeRoom(roomId, home) {
+  const rooms = loadRooms(home);
+  if (!(roomId in rooms))
+    return false;
+  delete rooms[roomId];
+  saveRooms(rooms, home);
+  if (getActiveRoom(home) === roomId)
+    setActiveRoom(null, home);
+  return true;
+}
+function activeRoomPath(home) {
+  return path.join(home ?? meshHome(), "active_room");
+}
+function getActiveRoom(home) {
+  const p = activeRoomPath(home);
+  if (!fs.existsSync(p))
+    return null;
+  try {
+    return fs.readFileSync(p, "utf8").trim() || null;
+  } catch {
+    return null;
+  }
+}
+function setActiveRoom(roomId, home) {
+  const p = activeRoomPath(home);
+  if (roomId === null) {
+    try {
+      fs.rmSync(p, { force: true });
+    } catch {}
+    return;
+  }
+  const dir = home ?? meshHome();
+  fs.mkdirSync(dir, { recursive: true, mode: 448 });
+  fs.writeFileSync(p, roomId + `
+`, { encoding: "utf8", mode: 384 });
+}
 function resolveRoom(roomIdOpt, home) {
   const rooms = loadRooms(home);
   if (roomIdOpt) {
     const entry = rooms[roomIdOpt];
     if (!entry) {
-      throw new Error(`Room "${roomIdOpt}" not in ${path.join(home ?? meshHome(), "rooms.json")}. Run "mesh join" first.`);
+      throw new Error(`Room "${roomIdOpt}" not in ${path.join(home ?? meshHome(), "rooms.json")}. Run "mesh room join" first.`);
     }
+    setActiveRoom(roomIdOpt, home);
     return { roomId: roomIdOpt, entry };
   }
   const ids = Object.keys(rooms);
   if (ids.length === 0)
-    throw new Error('No rooms joined. Run "mesh join" first.');
-  if (ids.length > 1)
-    throw new Error(`Multiple rooms: ${ids.join(", ")}. Use --room <room_id>.`);
-  const roomId = ids[0];
-  return { roomId, entry: rooms[roomId] };
+    throw new Error('No rooms joined. Run "mesh room join" first.');
+  if (ids.length === 1)
+    return { roomId: ids[0], entry: rooms[ids[0]] };
+  const active = getActiveRoom(home);
+  if (active && rooms[active])
+    return { roomId: active, entry: rooms[active] };
+  throw new Error(`Multiple rooms: ${ids.join(", ")}. Use --room <room_id> (it'll be remembered next time).`);
 }
 function buildCard(id, pubkey, secretBytes, opts = {}) {
   const owner_team = opts.owner_team ?? id.split("@")[1] ?? "default";
@@ -1763,13 +1802,14 @@ async function cmdCreateRoom(args) {
     die(`create-room: room created but owner auto-join failed: [${joined.error}] ${joined.detail}${joined.hint ? " — " + joined.hint : ""}`);
   }
   upsertRoom(roomId, { url: result.room_url, token: joined.token, participant_id: joined.participant_id }, home);
+  setActiveRoom(roomId, home);
   ok(`Room created: ${result.room_url}`);
   ok(`Joined as owner: ${joined.participant_id}`);
   ok(`Invite:       ${result.invite}`);
   ok(`Room pubkey:  ${result.room_pubkey}`);
   ok(`
 Share the invite with participants. They run:
-  mesh join ${result.room_url} ${result.invite}`);
+  mesh room join ${result.room_url} ${result.invite}`);
 }
 async function cmdJoin(args) {
   const roomUrl = args.positional[0];
@@ -1790,8 +1830,51 @@ async function cmdJoin(args) {
   if (!result.ok)
     die(`join failed: [${result.error}] ${result.detail}${result.hint ? " — " + result.hint : ""}`);
   upsertRoom(roomId, { url: roomUrl, token: result.token, participant_id: result.participant_id }, home);
+  setActiveRoom(roomId, home);
   ok(`Joined ${roomId} as ${result.participant_id}`);
   ok(`Head: seq=${result.head.seq} ${result.head.entry_hash}`);
+}
+async function cmdRoom(args) {
+  const sub = args.positional.shift();
+  switch (sub) {
+    case "create":
+      return cmdCreateRoom(args);
+    case "join":
+      return cmdJoin(args);
+    case "list":
+      return cmdRoomList(args);
+    case "rm":
+    case "remove":
+    case "forget":
+      return cmdRoomRm(args);
+    default:
+      die(`room: unknown action "${sub ?? ""}". Use: mesh room create|join|list|rm`);
+  }
+}
+async function cmdRoomList(args) {
+  const home = flag(args, "home");
+  const rooms = loadRooms(home);
+  const ids = Object.keys(rooms);
+  if (ids.length === 0) {
+    ok('No rooms joined. Run "mesh room join" first.');
+    return;
+  }
+  const active = getActiveRoom(home);
+  ok(`Joined rooms (${ids.length})${active ? `, active: ${active}` : ""}:`);
+  for (const id of ids) {
+    const r = rooms[id];
+    const mark = id === active ? "*" : " ";
+    ok(`${mark} ${id}  —  as ${r.participant_id}  —  ${r.url}`);
+  }
+}
+async function cmdRoomRm(args) {
+  const roomId = args.positional[0];
+  if (!roomId)
+    die("room rm: <room_id> is required");
+  const home = flag(args, "home");
+  if (!removeRoom(roomId, home))
+    die(`room rm: "${roomId}" not in rooms.json`);
+  ok(`Forgot room ${roomId} locally (rooms.json). This does not delete the room on the server.`);
 }
 async function cmdLog(args) {
   const follow = flagBool(args, "f");
@@ -1802,6 +1885,7 @@ async function cmdLog(args) {
   if (!identity)
     die('No identity. Run "mesh keygen" first.');
   const roomIdFromUrl = room.url.split("/").pop() ?? "unknown";
+  ok(ansi(DIM, `room: ${roomIdFromUrl}`));
   const client = new MeshClient({
     roomUrl: room.url,
     token: room.token,
@@ -1879,7 +1963,7 @@ async function cmdChat(args) {
   const ac = new AbortController;
   const input = startChatInput({
     prompt: "> ",
-    status: ansi(DIM, `— chat as ${identity.id} (Ctrl+D to exit) —`),
+    status: ansi(DIM, `— chat as ${identity.id} in ${roomIdFromUrl} (Ctrl+D to exit) —`),
     onSubmit: async (line) => {
       const text = line.trim();
       if (!text)
@@ -2090,12 +2174,16 @@ async function cmdWhoami(args) {
   const identity = loadIdentity(home);
   if (!identity)
     die('No identity. Run "mesh keygen --id <id>" first.');
+  const h2 = home ?? meshHome();
   ok(`id:     ${identity.id}`);
   ok(`pubkey: ${identity.pubkey}`);
+  ok(`home:   ${h2}  (config dir — set MESH_HOME or --home to change)`);
+  ok(`        holds identity.json · rooms.json · active_room`);
   const rooms = loadRooms(home);
   const roomIds = Object.keys(rooms);
   if (roomIds.length > 0) {
-    ok(`rooms:  ${roomIds.join(", ")}`);
+    const active = getActiveRoom(home);
+    ok(`rooms:  ${roomIds.map((r) => r === active ? `${r} (active)` : r).join(", ")}`);
   }
 }
 async function cmdInbox(args) {
@@ -2136,8 +2224,11 @@ function usage() {
 
 Commands:
   keygen --id <id>                                    Generate identity
-  create-room <room> --owner <id> [--url <base-url>]  Create a new room
-  join <room-url> <room>.<secret>                     Join a room
+  room create <room> --owner <id> [--url <base>]      Create a room (joins you as owner)
+  room join <room-url> <room>.<secret>                Join a room
+  room list                                           List joined rooms (* = active)
+  room rm <room_id>                                   Forget a room locally (not a server delete)
+    aliases: create-room → room create · join → room join
   log [-f]                                            Show room log (-f: follow)
   chat                                                Live stream + interactive post
   post <body> [--thread <t>]                          Post a request
@@ -2174,6 +2265,8 @@ async function main() {
       return cmdCreateRoom(args);
     case "join":
       return cmdJoin(args);
+    case "room":
+      return cmdRoom(args);
     case "log":
       return cmdLog(args);
     case "chat":

@@ -93,9 +93,11 @@ chmod +x "$LIVE/bin/mesh"
 # ── owner / human ────────────────────────────────────────────────────────────────
 export MESH_HOME="$LIVE/harry"
 $MESH keygen --id harry@hcproduct >/dev/null
-# create-room now auto-joins the owner locally (issues + stores the token); we only
-# parse the invite here so the agents below can join with it.
+# create-room auto-joins the owner on current CLIs, but we still run an explicit join:
+# it is idempotent (reconnect path) and keeps the demo working against older published
+# CLIs that predate auto-join. We also parse the invite — the agents below join with it.
 INVITE="$($MESH create-room "$ROOM_ID" --owner harry@hcproduct --url "$ROOM_URL" | awk '/Invite:/{print $NF}')"
+$MESH join "$ROOM_URL/v1/rooms/$ROOM_ID" "$INVITE" >/dev/null
 echo "Owner harry@hcproduct created room $ROOM_ID"
 
 # Locate an agent operating-contract markdown: repo examples in repo mode, else the
