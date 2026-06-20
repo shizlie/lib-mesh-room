@@ -13581,7 +13581,7 @@ var require_dist = __commonJS((exports, module) => {
 });
 
 // src/main.ts
-import { readFileSync as readFileSync5, existsSync as existsSync3 } from "node:fs";
+import { readFileSync as readFileSync5, existsSync as existsSync3, statSync as statSync3 } from "node:fs";
 import { mkdirSync as mkdirSync3, openSync, writeFileSync as writeFileSync2, rmSync as rmSync2 } from "node:fs";
 import { join as join3, resolve } from "node:path";
 import { homedir as homedir2 } from "node:os";
@@ -29215,10 +29215,20 @@ async function cmdStatus(configPath) {
     }
   }
   let probeState = "n/a";
+  let hookState = "n/a";
   if (config2.wake.backend === "tmux" && config2.wake.tmux) {
+    const staleMs = (config2.wake.hook_busy_stale_s ?? 900) * 1000;
+    const stateFile = join3(stateDir, AGENT_STATE_FILE);
+    try {
+      const raw = readFileSync5(stateFile, "utf8").trim();
+      const ageS = Math.round((Date.now() - statSync3(stateFile).mtimeMs) / 1000);
+      hookState = raw === "busy" && ageS * 1000 > staleMs ? `busy (age ${ageS}s — STALE > ${Math.round(staleMs / 1000)}s, ignored → scrape)` : `${raw} (age ${ageS}s)`;
+    } catch {
+      hookState = `<none> — no hook installed; using scrape fallback (install: meshl hooks)`;
+    }
     try {
       const rawInjector = buildInjector(config2);
-      const injector = config2.wake.tmux ? new HookStateInjector(rawInjector, config2.wake.tmux.pane, join3(stateDir, AGENT_STATE_FILE), (config2.wake.hook_busy_stale_s ?? 900) * 1000) : rawInjector;
+      const injector = new HookStateInjector(rawInjector, config2.wake.tmux.pane, stateFile, staleMs);
       probeState = await injector.probe();
     } catch (e) {
       probeState = `error: ${e instanceof Error ? e.message : String(e)}`;
@@ -29228,11 +29238,43 @@ async function cmdStatus(configPath) {
     `room:        ${config2.room.id}`,
     `wake_cursor: ${cursorSeq}`,
     `queue_depth: ${queueDepth}`,
+    `hook_state:  ${hookState}`,
     `probe:       ${probeState}`,
     `state_dir:   ${stateDir}`
   ].join(`
 `) + `
 `);
+}
+async function cmdPoke(configPath) {
+  const config2 = loadConfig(configPath);
+  if (config2.wake.backend === "mcp" || !config2.wake.tmux) {
+    die(`poke needs a tmux pane (wake.backend tmux or hybrid). backend "${config2.wake.backend}" is pull-only — the agent polls the room itself, so there is nothing to inject.`);
+  }
+  const stateDir = resolveHome(config2.state_dir);
+  let depth = "?";
+  const roomEntry = getRoom(config2.room.id);
+  if (roomEntry) {
+    try {
+      const { secretBytes } = loadSecretBytes(config2);
+      const client = buildClient(config2, secretBytes, roomEntry.token);
+      const state = await client.getState();
+      const cursorPath = join3(stateDir, "wake_cursor.json");
+      let cursorNum = -1;
+      if (existsSync3(cursorPath)) {
+        try {
+          cursorNum = JSON.parse(readFileSync5(cursorPath, "utf8")).seq;
+        } catch {}
+      }
+      depth = String(Math.max(0, state.head.seq - cursorNum));
+    } catch {}
+  }
+  const injector = buildInjector(config2);
+  if (await injector.probe() === "gone") {
+    die(`pane ${config2.wake.tmux.pane} not found — launch the agent in that pane first.`);
+  }
+  const line = `[mesh] poke — check the room now: run \`mesh inbox\` (queue_depth=${depth}).`;
+  await injector.inject(line);
+  console.log(`poked ${config2.identity.id} → pane ${config2.wake.tmux.pane} (queue_depth=${depth})`);
 }
 function usage() {
   process.stdout.write(`meshl — mesh listener daemon + MCP shim
@@ -29241,18 +29283,49 @@ Commands:
   run --config <path> [--foreground]   Start the daemon. Detaches to the background by default
                                        (logs → <state_dir>/daemon.log); --foreground/-f stays attached.
   stop --config <path>                 Stop the background daemon (SIGTERM via <state_dir>/daemon.pid).
-  status --config <path>               Show room, wake cursor, queue depth, probe.
+  status --config <path>               Show room, wake cursor, queue depth, hook state, probe.
+  poke   --config <path>               Force-inject an inbox hint into the pane now (manual wake;
+                                       bypasses the idle/busy gate — operator override when stuck).
   validate --config <path>             Check config, identity key, room reachability, wake wiring.
   mcp --state-dir <dir>                Run the stdio MCP shim (proxies to a running daemon's socket).
-  hooks --state-dir <dir>              Print Claude Code hook config that stamps idle/busy state
-                                       (the robust wake signal; merge into .claude/settings.json).
+  hooks [--runtime claude|omp] --state-dir <dir>
+                                       Print idle/busy state hooks (the robust wake signal):
+                                       claude → .claude/settings.json JSON; omp → an --hook module.
   help                                 Show this help.
 
 wake.backend (in mesh.yml):  tmux (push into a pane) | mcp (pull-only, no tmux) | hybrid (both).
 `);
 }
-function cmdHooks(stateDir) {
+function cmdHooks(stateDir, runtime) {
   const file = join3(stateDir, AGENT_STATE_FILE);
+  if (runtime === "omp") {
+    process.stderr.write(`# Oh My Pi (omp) idle/busy hook. Save it, then launch the agent with --hook:
+` + `#   meshl hooks --runtime omp --state-dir ${stateDir} > ~/mesh-agent/state-hook.ts
+` + `#   omp --hook ~/mesh-agent/state-hook.ts
+` + `# It stamps idle/busy into ${file} on turn boundaries so the meshl listener wakes the
+` + `# agent reliably. omp has no busy marker, so scraping its pane reads busy forever — this
+` + `# hook is the fix, not an optimization.
+`);
+    const d = JSON.stringify(stateDir);
+    const f = JSON.stringify(file);
+    process.stdout.write([
+      `// meshl idle/busy state hook for Oh My Pi (omp). Load with: omp --hook <this-file>`,
+      `import { mkdirSync, writeFileSync } from "node:fs";`,
+      `function stamp(s) {`,
+      `  try { mkdirSync(${d}, { recursive: true }); writeFileSync(${f}, s); } catch {}`,
+      `}`,
+      `export default function (pi) {`,
+      `  stamp("idle"); // boot: waiting for the first message`,
+      `  pi.on("turn_start", () => stamp("busy"));`,
+      `  pi.on("tool_call", () => stamp("busy"));   // refresh mtime so long turns stay fresh`,
+      `  pi.on("tool_result", () => stamp("busy"));`,
+      `  pi.on("turn_end", () => stamp("idle"));     // turn done: waiting for input`,
+      `}`,
+      ``
+    ].join(`
+`));
+    return;
+  }
   const busy = `mkdir -p ${stateDir} && printf busy > ${file}`;
   const idle = `mkdir -p ${stateDir} && printf idle > ${file}`;
   const snippet = {
@@ -29265,7 +29338,7 @@ function cmdHooks(stateDir) {
   };
   process.stderr.write(`# Claude Code hooks: merge into the agent's .claude/settings.json (or pipe stdout to it).
 ` + `# They stamp idle/busy into ${file} so the meshl listener wakes the agent reliably without
-` + `# scraping the terminal. Other runtimes: run the same printf on turn start/end.
+` + `# scraping the terminal. For omp agents use: meshl hooks --runtime omp
 `);
   process.stdout.write(JSON.stringify(snippet, null, 2) + `
 `);
@@ -29286,8 +29359,11 @@ try {
   } else if (cmd === "hooks") {
     const stateDir = flag(rest, "--state-dir");
     if (!stateDir)
-      die("usage: meshl hooks --state-dir <dir>");
-    cmdHooks(resolveHome(stateDir));
+      die("usage: meshl hooks [--runtime claude|omp] --state-dir <dir>");
+    const runtime = (flag(rest, "--runtime") ?? "claude").toLowerCase();
+    if (runtime !== "claude" && runtime !== "omp")
+      die(`unknown --runtime "${runtime}" (use claude or omp)`);
+    cmdHooks(resolveHome(stateDir), runtime);
   } else {
     const configPath = flag(rest, "--config") ?? "mesh.yml";
     if (cmd === "run") {
@@ -29298,6 +29374,8 @@ try {
       await cmdValidate(configPath);
     } else if (cmd === "status") {
       await cmdStatus(configPath);
+    } else if (cmd === "poke") {
+      await cmdPoke(configPath);
     } else {
       die(`unknown command "${cmd}". Run "meshl help" for usage.`);
     }
