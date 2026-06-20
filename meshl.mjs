@@ -15335,6 +15335,13 @@ class MeshClient {
   async deleteWatch(id) {
     await this._delete(`/watches/${encodeURIComponent(id)}`);
   }
+  async deleteRoom() {
+    const res = await this._delete("");
+    if (res.ok)
+      return { ok: true };
+    const body = await res.json().catch(() => ({}));
+    return { ok: false, error: body["error"] ?? res.statusText, status: res.status };
+  }
   static KEEPALIVE_MS = 25000;
   static RECONNECT_BASE_MS = 500;
   static RECONNECT_MAX_MS = 8000;
@@ -29330,14 +29337,20 @@ async function cmdStatus(configPath) {
       probeState = `error: ${e instanceof Error ? e.message : String(e)}`;
     }
   }
-  process.stdout.write([
+  const lines = [
     `room:        ${config2.room.id}`,
     `wake_cursor: ${cursorSeq}`,
     `queue_depth: ${queueDepth}`,
     `hook_state:  ${hookState}`,
     `probe:       ${probeState}`,
     `state_dir:   ${stateDir}`
-  ].join(`
+  ];
+  if (probeState === "busy" && queueDepth !== "0" && queueDepth !== "unknown") {
+    lines.push(`hint:        probe=busy with ${queueDepth} event(s) waiting — the agent may be stuck at a`);
+    lines.push(`             prompt (login / permission / input). Attach the pane (tmux attach) and clear it;`);
+    lines.push(`             wakes resume once it returns to idle. \`meshl poke\` can't dismiss a login screen.`);
+  }
+  process.stdout.write(lines.join(`
 `) + `
 `);
 }

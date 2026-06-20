@@ -1268,6 +1268,13 @@ class MeshClient {
   async deleteWatch(id) {
     await this._delete(`/watches/${encodeURIComponent(id)}`);
   }
+  async deleteRoom() {
+    const res = await this._delete("");
+    if (res.ok)
+      return { ok: true };
+    const body = await res.json().catch(() => ({}));
+    return { ok: false, error: body["error"] ?? res.statusText, status: res.status };
+  }
   static KEEPALIVE_MS = 25000;
   static RECONNECT_BASE_MS = 500;
   static RECONNECT_MAX_MS = 8000;
@@ -1899,8 +1906,10 @@ async function cmdRoom(args) {
     case "remove":
     case "forget":
       return cmdRoomRm(args);
+    case "delete":
+      return cmdRoomDelete(args);
     default:
-      die(`room: unknown action "${sub ?? ""}". Use: mesh room create|join|list|rm`);
+      die(`room: unknown action "${sub ?? ""}". Use: mesh room create|join|list|rm|delete`);
   }
 }
 async function cmdRoomList(args) {
@@ -1927,6 +1936,33 @@ async function cmdRoomRm(args) {
   if (!removeRoom(roomId, home))
     die(`room rm: "${roomId}" not in rooms.json`);
   ok(`Forgot room ${roomId} locally (rooms.json). This does not delete the room on the server.`);
+}
+async function cmdRoomDelete(args) {
+  const roomId = args.positional[0];
+  if (!roomId)
+    die("room delete: <room_id> is required");
+  const home = flag(args, "home");
+  const room = loadRooms(home)[roomId];
+  if (!room)
+    die(`room delete: not joined to "${roomId}" locally — need its url + token to authorize. Run from the owner's MESH_HOME.`);
+  const identity = loadIdentityWithSecret(home);
+  if (!identity)
+    die('No identity. Run "mesh keygen" first.');
+  const client = new MeshClient({
+    roomUrl: room.url,
+    token: room.token,
+    senderId: identity.id,
+    roomId,
+    secretBytes: identity.secretBytes
+  });
+  const result = await client.deleteRoom();
+  if (!result.ok) {
+    if (result.status === 403)
+      die(`room delete: only the room owner may delete "${roomId}" — run this from the owner's MESH_HOME.`);
+    die(`room delete failed: ${result.error} (HTTP ${result.status})`);
+  }
+  removeRoom(roomId, home);
+  ok(`Deleted room "${roomId}" on the server and forgot it locally. Re-create the id to reuse it.`);
 }
 async function cmdLog(args) {
   const follow = flagBool(args, "f");
@@ -2282,6 +2318,7 @@ Commands:
   room join <room-url> <room>.<secret>                Join a room
   room list                                           List joined rooms (* = active)
   room rm <room_id>                                   Forget a room locally (not a server delete)
+  room delete <room_id>                               Delete the room on the server (owner only) + forget locally
     aliases: create-room → room create · join → room join
   log [-f]                                            Show room log (-f: follow)
   chat                                                Live stream + interactive post
