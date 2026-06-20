@@ -188,7 +188,7 @@ sleep 8
 # Drain read cursors so the demo trigger is clean, then start the daemons.
 for name in hermes webby; do
   MESH_HOME="$LIVE/$name" $MESH inbox --mark >/dev/null 2>&1 || true
-  MESH_HOME="$LIVE/$name" nohup $MESHL run --config "$LIVE/$name.yml" \
+  MESH_HOME="$LIVE/$name" nohup $MESHL run --config "$LIVE/$name.yml" --foreground \
       >"/tmp/mesh-$name-daemon.log" 2>&1 &
 done
 sleep 3

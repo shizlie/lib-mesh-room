@@ -13582,9 +13582,10 @@ var require_dist = __commonJS((exports, module) => {
 
 // src/main.ts
 import { readFileSync as readFileSync4, existsSync as existsSync3 } from "node:fs";
-import { mkdirSync as mkdirSync3 } from "node:fs";
+import { mkdirSync as mkdirSync3, openSync, writeFileSync as writeFileSync2, rmSync as rmSync2 } from "node:fs";
 import { join as join3, resolve } from "node:path";
 import { homedir as homedir2 } from "node:os";
+import { spawn } from "node:child_process";
 
 // src/config.ts
 import { readFileSync } from "node:fs";
@@ -28836,6 +28837,9 @@ function flag(args, name) {
   const idx = args.indexOf(name);
   return idx !== -1 && idx + 1 < args.length ? args[idx + 1] : undefined;
 }
+function hasFlag(args, name) {
+  return args.includes(name);
+}
 function die(msg) {
   process.stderr.write(msg + `
 `);
@@ -28885,16 +28889,32 @@ async function registerWatches(client, config2) {
     }
   }
 }
-async function cmdRun(configPath) {
+async function cmdRun(configPath, opts) {
   const config2 = loadConfig(configPath);
   const { secretBytes } = loadSecretBytes(config2);
   const roomEntry = getRoom(config2.room.id);
   if (!roomEntry)
     die(`no token for room "${config2.room.id}" — run "mesh join" first`);
-  const client = buildClient(config2, secretBytes, roomEntry.token);
-  await registerWatches(client, config2);
   const stateDir = resolveHome(config2.state_dir);
   mkdirSync3(stateDir, { recursive: true, mode: 448 });
+  if (!opts.foreground && process.env["MESHL_DETACHED"] !== "1") {
+    const logPath = join3(stateDir, "daemon.log");
+    const out = openSync(logPath, "a");
+    const child = spawn(process.execPath, [process.argv[1], "run", "--config", configPath, "--foreground"], {
+      detached: true,
+      stdio: ["ignore", out, out],
+      env: { ...process.env, MESHL_DETACHED: "1" }
+    });
+    writeFileSync2(join3(stateDir, "daemon.pid"), `${child.pid}
+`, { mode: 384 });
+    child.unref();
+    console.log(`meshl daemon started — pid ${child.pid}, room ${config2.room.id}`);
+    console.log(`  logs: ${logPath}`);
+    console.log(`  stop: meshl stop --config ${configPath}`);
+    return;
+  }
+  const client = buildClient(config2, secretBytes, roomEntry.token);
+  await registerWatches(client, config2);
   const socketPath = join3(stateDir, "daemon.sock");
   const ipcHandle = await startIpcServer({
     client,
@@ -28945,8 +28965,8 @@ async function cmdRun(configPath) {
           yield frame;
         }
       },
-      async getEntries(opts) {
-        const result = await client.getEntries(opts);
+      async getEntries(opts2) {
+        const result = await client.getEntries(opts2);
         if (escalation) {
           for (const entry of result.entries) {
             if (isEscalation(entry, escalation, selfId, watches)) {
@@ -29010,6 +29030,28 @@ async function cmdRun(configPath) {
 async function cmdMcp(stateDir) {
   const socketPath = join3(stateDir, "daemon.sock");
   await runMcpStdio(socketPath);
+}
+async function cmdStop(configPath) {
+  const config2 = loadConfig(configPath);
+  const stateDir = resolveHome(config2.state_dir);
+  const pidPath = join3(stateDir, "daemon.pid");
+  if (!existsSync3(pidPath)) {
+    die(`no daemon.pid in ${stateDir} — daemon not running? (start: meshl run --config ${configPath})`);
+  }
+  const pid = parseInt(readFileSync4(pidPath, "utf8").trim(), 10);
+  if (!Number.isInteger(pid))
+    die(`invalid pid in ${pidPath}`);
+  try {
+    process.kill(pid, "SIGTERM");
+    console.log(`meshl daemon stopped (pid ${pid}, room ${config2.room.id})`);
+  } catch (e) {
+    const err2 = e;
+    if (err2.code === "ESRCH")
+      console.log(`meshl daemon (pid ${pid}) was not running — clearing stale pidfile`);
+    else
+      die(`failed to stop pid ${pid}: ${err2.message}`);
+  }
+  rmSync2(pidPath, { force: true });
 }
 async function cmdValidate(configPath) {
   let config2;
@@ -29133,24 +29175,50 @@ async function cmdStatus(configPath) {
 `) + `
 `);
 }
+function usage() {
+  process.stdout.write(`meshl — mesh listener daemon + MCP shim
+
+Commands:
+  run --config <path> [--foreground]   Start the daemon. Detaches to the background by default
+                                       (logs → <state_dir>/daemon.log); --foreground/-f stays attached.
+  stop --config <path>                 Stop the background daemon (SIGTERM via <state_dir>/daemon.pid).
+  status --config <path>               Show room, wake cursor, queue depth, probe.
+  validate --config <path>             Check config, identity key, room reachability, wake wiring.
+  mcp --state-dir <dir>                Run the stdio MCP shim (proxies to a running daemon's socket).
+  help                                 Show this help.
+
+wake.backend (in mesh.yml):  tmux (push into a pane) | mcp (pull-only, no tmux) | hybrid (both).
+`);
+}
 var argv = process.argv.slice(2);
 var cmd = argv[0];
-if (!cmd)
-  die("usage: meshl <run|validate|status|mcp> --config <path> | --state-dir <dir>");
-if (cmd === "mcp") {
-  const stateDir = flag(argv.slice(1), "--state-dir");
-  if (!stateDir)
-    die("usage: meshl mcp --state-dir <dir>");
-  await cmdMcp(resolveHome(stateDir));
-} else {
-  const configPath = flag(argv.slice(1), "--config") ?? "mesh.yml";
-  if (cmd === "run") {
-    await cmdRun(configPath);
-  } else if (cmd === "validate") {
-    await cmdValidate(configPath);
-  } else if (cmd === "status") {
-    await cmdStatus(configPath);
+var rest = argv.slice(1);
+if (!cmd || cmd === "help" || cmd === "--help" || cmd === "-h") {
+  usage();
+  process.exit(cmd ? 0 : 1);
+}
+try {
+  if (cmd === "mcp") {
+    const stateDir = flag(rest, "--state-dir");
+    if (!stateDir)
+      die("usage: meshl mcp --state-dir <dir>");
+    await cmdMcp(resolveHome(stateDir));
   } else {
-    die(`unknown command "${cmd}". usage: meshl <run|validate|status|mcp> --config <path>`);
+    const configPath = flag(rest, "--config") ?? "mesh.yml";
+    if (cmd === "run") {
+      await cmdRun(configPath, { foreground: hasFlag(rest, "--foreground") || hasFlag(rest, "-f") });
+    } else if (cmd === "stop") {
+      await cmdStop(configPath);
+    } else if (cmd === "validate") {
+      await cmdValidate(configPath);
+    } else if (cmd === "status") {
+      await cmdStatus(configPath);
+    } else {
+      die(`unknown command "${cmd}". Run "meshl help" for usage.`);
+    }
   }
+} catch (e) {
+  process.stderr.write(`meshl: ${e instanceof Error ? e.message : String(e)}
+`);
+  process.exit(1);
 }
