@@ -1021,6 +1021,24 @@ function loadIdentityWithSecret(home) {
     secretBytes: new Uint8Array(Buffer.from(identity.secret, "base64"))
   };
 }
+function listIdentityHomes(root = os.homedir()) {
+  let names;
+  try {
+    names = fs.readdirSync(root);
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const name of names) {
+    if (name !== ".mesh" && !name.startsWith(".mesh-"))
+      continue;
+    const home = path.join(root, name);
+    const identity = loadIdentity(home);
+    if (identity)
+      out.push({ home, identity });
+  }
+  return out.sort((a, b) => a.home.localeCompare(b.home));
+}
 function loadRooms(home) {
   const p = path.join(home ?? meshHome(), "rooms.json");
   if (!fs.existsSync(p))
@@ -1707,6 +1725,7 @@ function startChatInput(opts) {
 }
 
 // src/main.ts
+import * as os2 from "node:os";
 function parseArgs(argv) {
   const positional = [];
   const flags = {};
@@ -1772,13 +1791,18 @@ function ok(msg) {
 async function cmdKeygen(args) {
   const id = requiredFlag(args, "id", "keygen");
   const home = flag(args, "home");
+  const homeDir = home ?? meshHome();
   const existing = loadIdentity(home);
   if (existing && !flagBool(args, "force")) {
-    die(`Identity already exists at ${meshHome()}. Use --force to overwrite.`);
+    die(`Identity "${existing.id}" already exists at ${homeDir} (pubkey ${existing.pubkey}).
+` + `Use --force to overwrite — but note this MINTS A NEW KEYPAIR: rooms that bound the old
+` + `key will reject you with id_taken. To act as a different participant, use a separate MESH_HOME.`);
   }
   const identity = createIdentity(id, home);
   ok(`Created identity: ${identity.id}`);
+  ok(`  home:   ${homeDir}`);
   ok(`  pubkey: ${identity.pubkey}`);
+  ok(`To reuse this id elsewhere, COPY ${homeDir}/identity.json — never re-run keygen (that makes a new key).`);
 }
 async function cmdCreateRoom(args) {
   const roomId = args.positional[0];
@@ -1811,6 +1835,25 @@ async function cmdCreateRoom(args) {
 Share the invite with participants. They run:
   mesh room join ${result.room_url} ${result.invite}`);
 }
+function idTakenHelp(roomId, id, pubkey, home) {
+  return [
+    `join failed: [id_taken] room "${roomId}" already bound "${id}" to a DIFFERENT keypair than this one.`,
+    ``,
+    `  this MESH_HOME:   ${home}`,
+    `  its ${id} pubkey: ${pubkey}`,
+    ``,
+    `A participant id is permanently tied to the keypair that first used it in a room`,
+    `(trust-on-first-use). You ran "mesh keygen --id ${id}" in more than one MESH_HOME, so`,
+    `"${id}" now maps to two different keys — and this room only trusts the first one.`,
+    ``,
+    `Fix one of:`,
+    `  • Reuse the original identity: copy identity.json from the MESH_HOME that first joined`,
+    `    this room into ${home}/identity.json, then retry. Compare homes with: mesh whoami --home <dir>`,
+    `  • Or act as a new participant under a different id:`,
+    `      mesh keygen --id <other-id> --force --home ${home}   then   mesh room join …`
+  ].join(`
+`);
+}
 async function cmdJoin(args) {
   const roomUrl = args.positional[0];
   const inviteStr = args.positional[1];
@@ -1827,8 +1870,11 @@ async function cmdJoin(args) {
     die('No identity found. Run "mesh keygen --id <id>" first.');
   const card = buildCard(identity.id, identity.pubkey, identity.secretBytes);
   const result = await joinRoom(roomUrl, roomId, joinSecret, card, identity.secretBytes);
-  if (!result.ok)
+  if (!result.ok) {
+    if (result.error === "id_taken")
+      die(idTakenHelp(roomId, identity.id, identity.pubkey, home ?? meshHome()));
     die(`join failed: [${result.error}] ${result.detail}${result.hint ? " — " + result.hint : ""}`);
+  }
   upsertRoom(roomId, { url: roomUrl, token: result.token, participant_id: result.participant_id }, home);
   setActiveRoom(roomId, home);
   ok(`Joined ${roomId} as ${result.participant_id}`);
@@ -2247,12 +2293,78 @@ Commands:
   watch entry [--performative P] [--thread T]         Register entry watch
             [--mention-me]
   inbox [--since <seq>] [--mark]                      Fetch from read cursor
-  whoami                                              Show current identity
+  whoami                                              Show current identity (id, pubkey, home)
+  identity list                                       List local identities (~/.mesh*); flags id/key collisions
+  identity copy --from <home> --to <home> [--force]   Reuse one keypair across homes (local-testing only)
 
 Global options:
   --room <room_id>   Target room (if you have multiple rooms)
   --home <dir>       Override MESH_HOME (default: ~/.mesh)
 `);
+}
+function expandHome(p) {
+  return p.startsWith("~/") ? os2.homedir() + p.slice(1) : p;
+}
+async function cmdIdentity(args) {
+  const sub = args.positional.shift();
+  switch (sub) {
+    case "list":
+      return cmdIdentityList();
+    case "copy":
+      return cmdIdentityCopy(args);
+    default:
+      die(`identity: unknown action "${sub ?? ""}". Use: mesh identity list|copy`);
+  }
+}
+function cmdIdentityList() {
+  const homes = listIdentityHomes();
+  if (homes.length === 0) {
+    ok('No identities under ~/.mesh*. Run "mesh keygen --id <id>".');
+    return;
+  }
+  const current = process.env["MESH_HOME"] ?? meshHome();
+  const keysById = new Map;
+  for (const { identity } of homes) {
+    const set = keysById.get(identity.id) ?? new Set;
+    set.add(identity.pubkey);
+    keysById.set(identity.id, set);
+  }
+  ok(`Local identities (~/.mesh*) — current MESH_HOME: ${current}`);
+  for (const { home, identity } of homes) {
+    const mark = home === current ? "*" : " ";
+    const dupe = (keysById.get(identity.id)?.size ?? 1) > 1 ? "  ⚠ id reused with a different key" : "";
+    ok(`${mark} ${home}`);
+    ok(`    ${identity.id}  ${identity.pubkey}${dupe}`);
+  }
+  const collided = [...keysById.entries()].filter(([, s]) => s.size > 1).map(([id]) => id);
+  if (collided.length > 0) {
+    ok(``);
+    ok(`⚠ Same id, different keypairs: ${collided.join(", ")}. A room trusts only the FIRST key an id`);
+    ok(`  used (trust-on-first-use); the others hit id_taken on join. Reconcile into one identity:`);
+    ok(`    mesh identity copy --from <home-that-owns-the-room> --to <other-home> --force`);
+  }
+}
+async function cmdIdentityCopy(args) {
+  const fromArg = flag(args, "from");
+  const toArg = flag(args, "to");
+  if (!fromArg || !toArg)
+    die("identity copy: usage: mesh identity copy --from <home> --to <home> [--force]");
+  const from = expandHome(fromArg);
+  const to = expandHome(toArg);
+  if (from === to)
+    die("identity copy: --from and --to are the same home");
+  const src = loadIdentity(from);
+  if (!src)
+    die(`identity copy: no identity.json in ${from}`);
+  const dst = loadIdentity(to);
+  if (dst && !flagBool(args, "force")) {
+    die(`identity copy: ${to} already has identity "${dst.id}" (${dst.pubkey}). Use --force to overwrite.`);
+  }
+  saveIdentity(src, to);
+  ok(`Copied identity → ${to}`);
+  ok(`  ${src.id}  ${src.pubkey}`);
+  ok(`Both homes now share ONE keypair (local-testing only — they are now the SAME participant,`);
+  ok(`not isolated agents). Use separate keygen'd identities for anything real.`);
 }
 async function main() {
   const argv = process.argv.slice(2);
@@ -2293,6 +2405,8 @@ async function main() {
       return cmdWatch(args);
     case "whoami":
       return cmdWhoami(args);
+    case "identity":
+      return cmdIdentity(args);
     case "inbox":
       return cmdInbox(args);
     case "help":
