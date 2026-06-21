@@ -52,20 +52,17 @@ mesh claim <task_ref>
 
 1. **You hold the claim → build it** in this working directory. Real, working code; no
    placeholders, no `TODO`. Make the endpoint actually run and return the right shape.
-2. **Commit and capture the artifact** (a delivery without one is rejected by the room):
+2. **Deliver the work as a directory** (a delivery without an artifact is rejected by the room):
    ```
-   git add -A && git commit -m "<what you built>"
-   git rev-parse --short HEAD          # this is your <sha>
+   mesh deliver <task_ref> --dir . --body "<one-line summary>"
    ```
-3. **Deliver** with the artifact ref and a one-line summary:
-   ```
-   mesh deliver <task_ref> --artifact git:<repo>@<sha> --body "<summary>"
-   ```
-4. **Heartbeat is automatic** — your lease auto-renews on any append (deliver, or an `inform`
+   This tars the current directory (excluding `.git`/`node_modules`), uploads it to the room,
+   and delivers an `r2:<hash>` reference any room member can fetch.
+3. **Heartbeat is automatic** — your lease auto-renews on any append (deliver, or an `inform`
    carrying the task_ref). If your daemon is killed mid-claim, the lease expires and the room
    re-announces the task.
-5. **Respond to the verdict.** `reject`: read the reason with `mesh inbox`, fix, commit, and
-   `mesh deliver` the new sha; repeat until accepted. `accept`: the task is `DONE` — stop.
+4. **Respond to the verdict.** `reject`: read the reason with `mesh inbox`, fix and re-run
+   `mesh deliver <task_ref> --dir .`; repeat until accepted. `accept`: the task is `DONE` — stop.
 
 ## Hard constraints
 

@@ -15269,6 +15269,19 @@ class MeshClient {
       headers: { Authorization: `Bearer ${this.opts.token}` }
     });
   }
+  async _head(path2) {
+    return fetch(`${this.opts.roomUrl}${path2}`, {
+      method: "HEAD",
+      headers: { Authorization: `Bearer ${this.opts.token}` }
+    });
+  }
+  async _put(path2, body, headers) {
+    return fetch(`${this.opts.roomUrl}${path2}`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${this.opts.token}`, ...headers },
+      body
+    });
+  }
   async _err(res) {
     let body = {};
     try {
@@ -15357,6 +15370,28 @@ class MeshClient {
       return { ok: true };
     const body = await res.json().catch(() => ({}));
     return { ok: false, error: body["error"] ?? res.statusText, status: res.status };
+  }
+  async headArtifact(hash) {
+    const res = await this._head(`/artifacts/${hash}`);
+    return res.ok;
+  }
+  async putArtifact(hash, bytes) {
+    if (await this.headArtifact(hash))
+      return { ok: true, size: bytes.length, deduped: true };
+    const res = await this._put(`/artifacts/${hash}`, bytes, {
+      "Content-Type": "application/gzip",
+      "Content-Length": String(bytes.length)
+    });
+    if (!res.ok)
+      return this._err(res);
+    const data = await res.json();
+    return { ok: true, size: data.size, deduped: data.deduped ?? false };
+  }
+  async getArtifact(hash) {
+    const res = await this._get(`/artifacts/${hash}`);
+    if (!res.ok)
+      return this._err(res);
+    return new Uint8Array(await res.arrayBuffer());
   }
   static KEEPALIVE_MS = 25000;
   static RECONNECT_BASE_MS = 500;

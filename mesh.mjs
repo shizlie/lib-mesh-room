@@ -1186,6 +1186,19 @@ class MeshClient {
       headers: { Authorization: `Bearer ${this.opts.token}` }
     });
   }
+  async _head(path2) {
+    return fetch(`${this.opts.roomUrl}${path2}`, {
+      method: "HEAD",
+      headers: { Authorization: `Bearer ${this.opts.token}` }
+    });
+  }
+  async _put(path2, body, headers) {
+    return fetch(`${this.opts.roomUrl}${path2}`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${this.opts.token}`, ...headers },
+      body
+    });
+  }
   async _err(res) {
     let body = {};
     try {
@@ -1274,6 +1287,28 @@ class MeshClient {
       return { ok: true };
     const body = await res.json().catch(() => ({}));
     return { ok: false, error: body["error"] ?? res.statusText, status: res.status };
+  }
+  async headArtifact(hash) {
+    const res = await this._head(`/artifacts/${hash}`);
+    return res.ok;
+  }
+  async putArtifact(hash, bytes) {
+    if (await this.headArtifact(hash))
+      return { ok: true, size: bytes.length, deduped: true };
+    const res = await this._put(`/artifacts/${hash}`, bytes, {
+      "Content-Type": "application/gzip",
+      "Content-Length": String(bytes.length)
+    });
+    if (!res.ok)
+      return this._err(res);
+    const data = await res.json();
+    return { ok: true, size: data.size, deduped: data.deduped ?? false };
+  }
+  async getArtifact(hash) {
+    const res = await this._get(`/artifacts/${hash}`);
+    if (!res.ok)
+      return this._err(res);
+    return new Uint8Array(await res.arrayBuffer());
   }
   static KEEPALIVE_MS = 25000;
   static RECONNECT_BASE_MS = 500;
@@ -1735,8 +1770,62 @@ function startChatInput(opts) {
   };
 }
 
+// src/artifact.ts
+import { createHash } from "node:crypto";
+import { spawn } from "node:child_process";
+import { mkdirSync as mkdirSync2 } from "node:fs";
+function sha256hex(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+var DEFAULT_EXCLUDES = [".git", "node_modules"];
+async function packDir(dir, opts = {}) {
+  const excludes = (opts.exclude ?? DEFAULT_EXCLUDES).flatMap((e) => ["--exclude", e]);
+  const args = ["-czf", "-", ...excludes, "-C", dir, "."];
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const child = spawn("tar", args, { stdio: ["ignore", "pipe", "pipe"] });
+  const chunks = [];
+  const errChunks = [];
+  child.stdout.on("data", (chunk) => chunks.push(chunk));
+  child.stderr.on("data", (chunk) => errChunks.push(chunk));
+  child.on("error", reject);
+  child.on("close", (code) => {
+    if (code !== 0) {
+      reject(new Error(`tar pack failed (exit ${code}): ${Buffer.concat(errChunks).toString()}`));
+      return;
+    }
+    const buf = Buffer.concat(chunks);
+    const bytes = new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+    resolve({ bytes, hash: sha256hex(bytes), size: bytes.length });
+  });
+  return promise;
+}
+async function unpackInto(bytes, dir) {
+  mkdirSync2(dir, { recursive: true });
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const child = spawn("tar", ["-xzf", "-", "-C", dir], { stdio: ["pipe", "ignore", "pipe"] });
+  const errChunks = [];
+  child.stderr.on("data", (chunk) => errChunks.push(chunk));
+  child.on("error", reject);
+  child.on("close", (code) => {
+    if (code !== 0) {
+      reject(new Error(`tar unpack failed (exit ${code}): ${Buffer.concat(errChunks).toString()}`));
+    } else {
+      resolve();
+    }
+  });
+  child.stdin.on("error", reject);
+  child.stdin.write(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength));
+  child.stdin.end();
+  return promise;
+}
+function parseArtifactRef(ref) {
+  const m = /^r2:([0-9a-f]{64})$/.exec(ref);
+  return m ? { kind: "r2", hash: m[1] } : { kind: "other", raw: ref };
+}
+
 // src/main.ts
 import * as os2 from "node:os";
+import { resolve } from "node:path";
 function parseArgs(argv) {
   const positional = [];
   const flags = {};
@@ -2046,8 +2135,8 @@ async function cmdChat(args) {
   let senderWidth = widths.length > 0 ? Math.min(28, Math.max(12, Math.max(...widths))) : undefined;
   let since = head.seq;
   let inputExit;
-  const inputClosed = new Promise((resolve) => {
-    inputExit = resolve;
+  const inputClosed = new Promise((resolve2) => {
+    inputExit = resolve2;
   });
   const ac = new AbortController;
   const input = startChatInput({
@@ -2183,6 +2272,114 @@ async function simpleTaskCmd(performative, args, requireBody = false) {
   if (!result.ok)
     die(`${performative} failed: [${result.error}] ${result.detail}${result.hint ? " — " + result.hint : ""}`);
   ok(`${performative} ${taskRef} (seq=${result.seq})`);
+}
+function resolveDeliverMode(a) {
+  if (a.dir && a.artifact)
+    throw new Error("deliver: --dir and --artifact are mutually exclusive");
+  if (a.dir)
+    return { mode: "dir", dir: a.dir };
+  if (a.artifact)
+    return { mode: "ref", artifacts: a.artifact.split(",").map((s) => s.trim()) };
+  throw new Error("deliver: provide --dir <path> or --artifact <ref>");
+}
+async function cmdDeliver(args) {
+  if (!args.positional[0])
+    die("deliver: <task_ref> is required");
+  let m;
+  try {
+    m = resolveDeliverMode({ dir: flag(args, "dir"), artifact: flag(args, "artifact") });
+  } catch (err2) {
+    die(err2 instanceof Error ? err2.message : String(err2));
+  }
+  if (m.mode === "ref") {
+    return simpleTaskCmd("deliver", args);
+  }
+  const taskRef = args.positional[0];
+  const body = flag(args, "body");
+  const home = flag(args, "home");
+  const roomArg = flag(args, "room");
+  const { roomId, entry: room } = resolveRoom(roomArg, home);
+  const identity = loadIdentityWithSecret(home);
+  if (!identity)
+    die('No identity. Run "mesh keygen" first.');
+  const client = new MeshClient({
+    roomUrl: room.url,
+    token: room.token,
+    senderId: identity.id,
+    roomId,
+    secretBytes: identity.secretBytes
+  });
+  const { bytes, hash, size } = await packDir(m.dir);
+  const put = await client.putArtifact(hash, bytes);
+  if (!put.ok)
+    die(`deliver: artifact upload failed: [${put.error}] ${put.detail}`);
+  const r = await client.postEntry({
+    performative: "deliver",
+    task_ref: taskRef,
+    artifacts: ["r2:" + hash],
+    ...body ? { body } : {}
+  });
+  if (!r.ok)
+    die(`deliver failed: [${r.error}] ${r.detail}${r.hint ? " — " + r.hint : ""}`);
+  ok(`delivered ${taskRef} (seq=${r.seq})  artifact r2:${hash}  (${size} bytes, ${put.deduped ? "deduped" : "uploaded"})`);
+}
+function resolveFetchRef(arg, entries) {
+  if (arg.startsWith("r2:"))
+    return parseArtifactRef(arg);
+  for (let i = entries.length - 1;i >= 0; i--) {
+    const s = entries[i].submission;
+    if (s.performative === "deliver" && s.task_ref === arg && s.artifacts?.length) {
+      return parseArtifactRef(s.artifacts[0]);
+    }
+  }
+  throw new Error(`fetch: no delivery found for task "${arg}"`);
+}
+async function collectAllEntries(client) {
+  const all = [];
+  let since = 0;
+  for (;; ) {
+    const { entries } = await client.getEntries({ since, limit: 100 });
+    all.push(...entries);
+    if (entries.length < 100)
+      break;
+    since = entries[entries.length - 1].seq;
+  }
+  return all;
+}
+async function cmdFetch(args) {
+  const arg = args.positional[0];
+  if (!arg)
+    die("fetch: <task|r2:hash> is required");
+  const home = flag(args, "home");
+  const roomArg = flag(args, "room");
+  const { roomId, entry: room } = resolveRoom(roomArg, home);
+  const identity = loadIdentityWithSecret(home);
+  if (!identity)
+    die('No identity. Run "mesh keygen" first.');
+  const client = new MeshClient({
+    roomUrl: room.url,
+    token: room.token,
+    senderId: identity.id,
+    roomId,
+    secretBytes: identity.secretBytes
+  });
+  const entries = arg.startsWith("r2:") ? [] : await collectAllEntries(client);
+  let ref;
+  try {
+    ref = resolveFetchRef(arg, entries);
+  } catch (err2) {
+    die(err2 instanceof Error ? err2.message : String(err2));
+  }
+  if (ref.kind === "other") {
+    ok(`Artifact is not an R2 tarball: ${ref.raw} (fetch it manually)`);
+    return;
+  }
+  const bytes = await client.getArtifact(ref.hash);
+  if (!(bytes instanceof Uint8Array))
+    die(`fetch: [${bytes.error}] ${bytes.detail}${bytes.hint ? " — " + bytes.hint : ""}`);
+  const dest = resolve(flag(args, "into") ?? `./.mesh/artifacts/${arg.startsWith("r2:") ? ref.hash : arg}`);
+  await unpackInto(bytes, dest);
+  ok(`Extracted to ${dest}`);
 }
 async function cmdState(args) {
   const home = flag(args, "home");
@@ -2330,7 +2527,7 @@ Commands:
              --depends-on <ref[,ref]>
   claim <task_ref>                                    Claim a task (CAS)
   release <task_ref>                                  Release a held task
-  deliver <task_ref> --artifact <ref> [--body <s>]    Deliver artifacts
+  deliver <task_ref> [--dir <path> | --artifact <ref>] [--body <s>]    Deliver artifacts
   accept <task_ref> [--body <s>]                      Accept delivery
   reject <task_ref> --body <reason>                   Reject delivery
   inform <task_ref> --body <s>                        Post progress inform
@@ -2339,6 +2536,7 @@ Commands:
   watch entry [--performative P] [--thread T]         Register entry watch
             [--mention-me]
   inbox [--since <seq>] [--mark]                      Fetch from read cursor
+  fetch <task|r2:hash> [--into <dir>]                 Download + extract a delivered artifact
   whoami                                              Show current identity (id, pubkey, home)
   identity list                                       List local identities (~/.mesh*); flags id/key collisions
   identity copy --from <home> --to <home> [--force]   Reuse one keypair across homes (local-testing only)
@@ -2438,7 +2636,7 @@ async function main() {
     case "release":
       return simpleTaskCmd("release", args);
     case "deliver":
-      return simpleTaskCmd("deliver", args);
+      return cmdDeliver(args);
     case "accept":
       return simpleTaskCmd("accept", args);
     case "reject":
@@ -2455,6 +2653,8 @@ async function main() {
       return cmdIdentity(args);
     case "inbox":
       return cmdInbox(args);
+    case "fetch":
+      return cmdFetch(args);
     case "help":
     case "--help":
     case "-h":
@@ -2475,3 +2675,8 @@ main().catch((err2) => {
 `);
   process.exit(1);
 });
+export {
+  resolveFetchRef,
+  resolveDeliverMode,
+  collectAllEntries
+};

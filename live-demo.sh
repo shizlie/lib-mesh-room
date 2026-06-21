@@ -126,8 +126,6 @@ setup_agent() {
   mkdir -p "$work"
   local contract_src; contract_src="$(find_contract "$contract")" || { echo "agent prompt '$contract' not found" >&2; exit 1; }
   cp "$contract_src" "$work/CLAUDE.md"
-  ( cd "$work" && git init -q && git config user.email "$id" && git config user.name "$name" \
-      && git add -A && git commit -qm "seed: operating contract" )
 
   cat > "$LIVE/launch-$name.sh" <<EOF
 #!/usr/bin/env bash

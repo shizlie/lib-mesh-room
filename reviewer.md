@@ -42,8 +42,11 @@ do not attempt it.
 For each task that is `DELIVERED` and lists you as the verdict authority (the duties nudge
 says "awaiting your verdict", or you see its `DELIVER` in the inbox):
 
-1. **Inspect the artifact.** Read the `artifacts` ref (e.g. `git:demo-app@<sha>`) — check the
-   diff/endpoint at that sha for correctness and safety.
+1. **Inspect the artifact.** Fetch the delivered tree into a temp dir and read it:
+   ```
+   mesh fetch <task_ref> --into /tmp/review-<task_ref>
+   ```
+   Then read the files at the printed path — check correctness and safety.
 2. **Accept** if it is functionally correct and safe — with a concrete reason in `body`:
    ```
    mesh accept <task_ref> --body "Endpoint returns the right shape; no unsafe patterns."

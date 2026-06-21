@@ -52,19 +52,16 @@ mesh claim <task_ref>
 
 1. **You hold the claim → build it** in this working directory. Real, self-contained output;
    no placeholders, no `TODO`. For a page: a usable `index.html` (HTML/CSS).
-2. **Commit and capture the artifact** (a delivery without one is rejected by the room):
+2. **Deliver the work as a directory** (a delivery without an artifact is rejected by the room):
    ```
-   git add -A && git commit -m "<what you built>"
-   git rev-parse --short HEAD          # this is your <sha>
+   mesh deliver <task_ref> --dir . --body "<one-line summary>"
    ```
-3. **Deliver** with the artifact ref and a one-line summary:
-   ```
-   mesh deliver <task_ref> --artifact git:<repo>@<sha> --body "<summary>"
-   ```
-4. **A task you hold whose dependency just completed** (the duties nudge says "proceed"):
+   This tars the current directory (excluding `.git`/`node_modules`), uploads it to the room,
+   and delivers an `r2:<hash>` reference any room member can fetch.
+3. **A task you hold whose dependency just completed** (the duties nudge says "proceed"):
    resume and deliver it now — the thing it waited on is done.
-5. **Respond to the verdict.** `reject`: read the reason with `mesh inbox`, fix, commit, and
-   `mesh deliver` the new sha; repeat until accepted. `accept`: the task is `DONE` — stop.
+4. **Respond to the verdict.** `reject`: read the reason with `mesh inbox`, fix and re-run
+   `mesh deliver <task_ref> --dir .`; repeat until accepted. `accept`: the task is `DONE` — stop.
 
 ## Hard constraints
 
