@@ -15756,6 +15756,30 @@ class MeshClient {
     const data = await res.json();
     return { ok: true, invite: data.invite };
   }
+  async createPassphraseInvite(participantId, passphrase, ttlS) {
+    const res = await this._post("/invites", {
+      participant_id: participantId,
+      passphrase,
+      ...ttlS !== undefined && { ttl_s: ttlS }
+    });
+    if (!res.ok)
+      return this._err(res);
+    const data = await res.json();
+    return { ok: true, ...data };
+  }
+  async listPassphraseInvites() {
+    const res = await this._get("/invites");
+    if (!res.ok)
+      return this._err(res);
+    const data = await res.json();
+    return { ok: true, invites: data.invites };
+  }
+  async revokePassphraseInvite(participantId) {
+    const res = await this._delete(`/invites/${encodeURIComponent(participantId)}`);
+    if (!res.ok)
+      return this._err(res);
+    return { ok: true };
+  }
   async headArtifact(hash) {
     const res = await this._head(`/artifacts/${hash}`);
     return res.ok;

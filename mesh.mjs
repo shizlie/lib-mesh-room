@@ -1305,10 +1305,11 @@ async function promptLine(question, def) {
   }
 }
 async function promptChoice(question, choices) {
-  if (choices.length === 0)
+  const first = choices[0];
+  if (first === undefined)
     throw new Error("promptChoice: choices must be non-empty");
-  const ans = await promptLine(`${question} (${choices.join("/")})`, choices[0]);
-  return choices.includes(ans) ? ans : choices[0];
+  const ans = await promptLine(`${question} (${choices.join("/")})`, first);
+  return choices.includes(ans) ? ans : first;
 }
 
 // src/client.ts
@@ -1499,6 +1500,30 @@ class MeshClient {
     const data = await res.json();
     return { ok: true, invite: data.invite };
   }
+  async createPassphraseInvite(participantId, passphrase, ttlS) {
+    const res = await this._post("/invites", {
+      participant_id: participantId,
+      passphrase,
+      ...ttlS !== undefined && { ttl_s: ttlS }
+    });
+    if (!res.ok)
+      return this._err(res);
+    const data = await res.json();
+    return { ok: true, ...data };
+  }
+  async listPassphraseInvites() {
+    const res = await this._get("/invites");
+    if (!res.ok)
+      return this._err(res);
+    const data = await res.json();
+    return { ok: true, invites: data.invites };
+  }
+  async revokePassphraseInvite(participantId) {
+    const res = await this._delete(`/invites/${encodeURIComponent(participantId)}`);
+    if (!res.ok)
+      return this._err(res);
+    return { ok: true };
+  }
   async headArtifact(hash) {
     const res = await this._head(`/artifacts/${hash}`);
     return res.ok;
@@ -1683,13 +1708,19 @@ async function createRoom(workerBaseUrl, roomId, ownerCard, joinSecret, defaults
   return { ok: true, ...data };
 }
 async function joinRoom(roomUrl, roomId, joinSecret, card, secretBytes) {
+  return joinRoomWith(roomUrl, roomId, { join_secret: joinSecret }, card, secretBytes);
+}
+async function joinRoomWithPassphrase(roomUrl, roomId, passphrase, card, secretBytes) {
+  return joinRoomWith(roomUrl, roomId, { passphrase }, card, secretBytes);
+}
+async function joinRoomWith(roomUrl, roomId, credential, card, secretBytes) {
   const ts = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
   const challengeBytes = new TextEncoder().encode(jcs({ room: roomId, id: card.id, ts }));
   const challenge_sig = signBytes(challengeBytes, secretBytes);
   const res = await fetch(`${roomUrl}/join`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ join_secret: joinSecret, card, ts, challenge_sig })
+    body: JSON.stringify({ ...credential, card, ts, challenge_sig })
   });
   if (!res.ok) {
     let errBody = {};
@@ -8541,19 +8572,30 @@ function idTakenHelp(roomId, id2, pubkey, home) {
 async function cmdJoin(args2) {
   const roomUrl = args2.positional[0];
   const inviteStr = args2.positional[1];
-  if (!roomUrl || !inviteStr)
-    die3("join: usage: mesh join <room-url> <room>.<secret>");
+  const passphrase = flag2(args2, "passphrase");
+  if (!roomUrl || !inviteStr) {
+    die3("join: usage: mesh join <room-url> <room>.<secret>   or   mesh join <room-url> <room> --passphrase <phrase>");
+  }
+  if (passphrase === undefined && flagBool(args2, "passphrase")) {
+    die3("join: --passphrase requires a value, e.g. --passphrase angry-lion");
+  }
   const home = flag2(args2, "home");
-  const parts = inviteStr.split(".");
-  if (parts.length < 2)
-    die3("join: invite must be in format <room_id>.<join_secret>");
-  const joinSecret = parts[parts.length - 1];
-  const roomId = parts.slice(0, -1).join(".");
+  let roomId;
+  let joinSecret;
+  if (passphrase !== undefined) {
+    roomId = inviteStr;
+  } else {
+    const parts = inviteStr.split(".");
+    if (parts.length < 2)
+      die3("join: invite must be in format <room_id>.<join_secret> (or pass --passphrase <phrase> with a bare room id)");
+    joinSecret = parts[parts.length - 1];
+    roomId = parts.slice(0, -1).join(".");
+  }
   const identity = loadIdentityWithSecret(home);
   if (!identity)
     die3('No identity found. Run "mesh keygen --id <id>" first.');
   const card = buildCard(identity.id, identity.pubkey, identity.secretBytes, { roles: identity.roles, host: flag2(args2, "host") ?? os2.hostname() });
-  const result = await joinRoom(roomUrl, roomId, joinSecret, card, identity.secretBytes);
+  const result = passphrase !== undefined ? await joinRoomWithPassphrase(roomUrl, roomId, passphrase, card, identity.secretBytes) : await joinRoom(roomUrl, roomId, joinSecret, card, identity.secretBytes);
   if (!result.ok) {
     if (result.error === "id_taken")
       die3(idTakenHelp(roomId, identity.id, identity.pubkey, home ?? meshHome()));
@@ -8642,13 +8684,155 @@ async function cmdRoomDelete(args2) {
 function extractInviteSecret(invite, roomId) {
   return invite.startsWith(roomId + ".") ? invite.slice(roomId.length + 1) : invite;
 }
+var PASSPHRASE_ADJECTIVES = [
+  "angry",
+  "brave",
+  "calm",
+  "clever",
+  "curious",
+  "dizzy",
+  "eager",
+  "fancy",
+  "fierce",
+  "fluffy",
+  "gentle",
+  "giddy",
+  "glad",
+  "grumpy",
+  "happy",
+  "hasty",
+  "humble",
+  "hungry",
+  "jolly",
+  "jumpy",
+  "keen",
+  "lazy",
+  "loud",
+  "lucky",
+  "mellow",
+  "mighty",
+  "nifty",
+  "nimble",
+  "noisy",
+  "odd",
+  "patient",
+  "perky",
+  "plucky",
+  "polite",
+  "proud",
+  "quick",
+  "quiet",
+  "rapid",
+  "rowdy",
+  "rusty",
+  "salty",
+  "shiny",
+  "silly",
+  "sleepy",
+  "sly",
+  "snappy",
+  "sneaky",
+  "spicy",
+  "spry",
+  "stormy",
+  "sturdy",
+  "sunny",
+  "swift",
+  "tame",
+  "tidy",
+  "tiny",
+  "tough",
+  "wild",
+  "witty",
+  "wobbly",
+  "young",
+  "zany",
+  "zealous",
+  "zesty"
+];
+var PASSPHRASE_ANIMALS = [
+  "ant",
+  "badger",
+  "bat",
+  "bear",
+  "beaver",
+  "bee",
+  "bison",
+  "camel",
+  "cat",
+  "cobra",
+  "crab",
+  "crane",
+  "crow",
+  "deer",
+  "dingo",
+  "dolphin",
+  "donkey",
+  "duck",
+  "eagle",
+  "falcon",
+  "ferret",
+  "finch",
+  "fox",
+  "frog",
+  "gecko",
+  "gibbon",
+  "goat",
+  "goose",
+  "hare",
+  "hawk",
+  "heron",
+  "horse",
+  "hyena",
+  "ibex",
+  "jaguar",
+  "koala",
+  "lemur",
+  "lion",
+  "llama",
+  "lynx",
+  "mole",
+  "moose",
+  "mouse",
+  "newt",
+  "otter",
+  "owl",
+  "panda",
+  "panther",
+  "pig",
+  "prawn",
+  "puma",
+  "rabbit",
+  "raven",
+  "seal",
+  "shark",
+  "sheep",
+  "sloth",
+  "swan",
+  "tiger",
+  "toad",
+  "walrus",
+  "weasel",
+  "wolf",
+  "yak"
+];
+function generatePassphrase() {
+  const idx = crypto.getRandomValues(new Uint8Array(2));
+  const adj = PASSPHRASE_ADJECTIVES[idx[0] % PASSPHRASE_ADJECTIVES.length];
+  const animal = PASSPHRASE_ANIMALS[idx[1] % PASSPHRASE_ANIMALS.length];
+  return `${adj}-${animal}`;
+}
 async function cmdRoomInvite(args2) {
   const roomId = args2.positional[0];
   const home = flag2(args2, "home");
   const showFlag = flagBool(args2, "show");
   const rotateFlag = flagBool(args2, "rotate");
-  if (!showFlag && !rotateFlag)
-    die3("room invite: use --show to display or --rotate to generate a new invite");
+  const forId = flag2(args2, "for");
+  const listFlag = flagBool(args2, "list");
+  const revokeId = flag2(args2, "revoke");
+  if (!showFlag && !rotateFlag && !forId && !listFlag && !revokeId) {
+    die3("room invite: use --show | --rotate | --for <participant-id> [--passphrase <phrase>] [--ttl <seconds>] | --list | --revoke <participant-id>");
+  }
   const { roomId: resolvedId, entry: room } = resolveRoom(roomId, home);
   const identity = loadIdentityWithSecret(home);
   if (!identity)
@@ -8659,14 +8843,15 @@ async function cmdRoomInvite(args2) {
     }
     ok3(`${resolvedId}.${room.join_secret}`);
     return;
-  } else if (rotateFlag) {
-    const client = new MeshClient({
-      roomUrl: room.url,
-      token: room.token,
-      senderId: identity.id,
-      roomId: resolvedId,
-      secretBytes: identity.secretBytes
-    });
+  }
+  const client = new MeshClient({
+    roomUrl: room.url,
+    token: room.token,
+    senderId: identity.id,
+    roomId: resolvedId,
+    secretBytes: identity.secretBytes
+  });
+  if (rotateFlag) {
     const result = await client.rotateInvite();
     if (!result.ok) {
       if (result.status === 403)
@@ -8677,6 +8862,50 @@ async function cmdRoomInvite(args2) {
     upsertRoom(resolvedId, { ...room, join_secret: newSecret }, home);
     ok3(`New invite: ${result.invite}`);
     ok3(`Share with participants: mesh room join ${room.url} ${result.invite}`);
+  } else if (forId) {
+    const passphrase = flag2(args2, "passphrase") ?? generatePassphrase();
+    const ttlRaw = flag2(args2, "ttl");
+    const ttlS = ttlRaw !== undefined ? Number(ttlRaw) : undefined;
+    if (ttlS !== undefined && (!Number.isFinite(ttlS) || ttlS <= 0))
+      die3("room invite: --ttl must be a positive number of seconds");
+    const result = await client.createPassphraseInvite(forId, passphrase, ttlS);
+    if (!result.ok) {
+      if (result.status === 403)
+        die3(`room invite --for: only the room owner may mint invites for "${resolvedId}" — run this from the owner's MESH_HOME.`);
+      die3(`room invite --for failed: [${result.error}] ${result.detail}`);
+    }
+    const mins = Math.round((result.expires - Date.now()) / 60000);
+    ok3(`Passphrase invite for "${forId}": ${passphrase}`);
+    ok3(`Single-use, expires in ~${mins} min. Share the phrase out-of-band; they run:`);
+    ok3(`  mesh keygen --id "${forId}"   (if they have no identity yet)`);
+    ok3(`  mesh room join ${room.url} ${resolvedId} --passphrase ${passphrase}`);
+    ok3(`Note: the phrase only admits an agent whose identity id is exactly "${forId}".`);
+  } else if (listFlag) {
+    const result = await client.listPassphraseInvites();
+    if (!result.ok) {
+      if (result.status === 403)
+        die3(`room invite --list: only the room owner may list invites for "${resolvedId}".`);
+      die3(`room invite --list failed: [${result.error}] ${result.detail}`);
+    }
+    if (result.invites.length === 0) {
+      ok3("No pending passphrase invites.");
+      return;
+    }
+    ok3(`Pending passphrase invites (${result.invites.length}):`);
+    for (const inv of result.invites) {
+      const mins = Math.max(0, Math.round((inv.expires - Date.now()) / 60000));
+      ok3(`  ${inv.participant_id}  —  expires in ~${mins} min${inv.attempts > 0 ? `  —  ${inv.attempts} failed attempt(s)` : ""}`);
+    }
+  } else if (revokeId) {
+    const result = await client.revokePassphraseInvite(revokeId);
+    if (!result.ok) {
+      if (result.status === 404)
+        die3(`room invite --revoke: no pending invite for "${revokeId}".`);
+      if (result.status === 403)
+        die3(`room invite --revoke: only the room owner may revoke invites for "${resolvedId}".`);
+      die3(`room invite --revoke failed: [${result.error}] ${result.detail}`);
+    }
+    ok3(`Revoked pending invite for "${revokeId}".`);
   }
 }
 function isFilePlaneEntry(performative) {
@@ -9558,7 +9787,10 @@ identity:
 room:
   room create <room> --owner <id> [--url <base>]            Create a room and join as owner
   room join <room-url> <room>.<secret>                      Join an existing room
+  room join <room-url> <room> --passphrase <phrase>         Join with a single-use passphrase invite
   room invite [--show | --rotate]                           Show or rotate the invite secret (owner only)
+  room invite --for <id> [--passphrase <p>] [--ttl <s>]     Mint a single-use passphrase invite for one participant id (owner only)
+  room invite [--list | --revoke <id>]                      List or revoke pending passphrase invites (owner only)
   room list                                                 List locally-joined rooms (* = active)
   room rm <room_id>                                         Forget a room locally (not a server delete)
   room delete <room_id>                                     Delete the room on the server (owner only)
@@ -9786,6 +10018,7 @@ export {
   hydrateSubtree,
   hydrateGrepWinners,
   grepLine,
+  generatePassphrase,
   flagOutOfScope,
   extractInviteSecret,
   collectAllEntries
