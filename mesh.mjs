@@ -1834,9 +1834,6 @@ function renderRoster(rows) {
     short(r.pubkey)
   ]));
 }
-function renderTree(rows, policyFor2) {
-  return renderTable(["path", "size", "policy", "tip", "editing"], rows.map((r) => [r.path, String(r.size), policyFor2(r.path), String(r.tip_seq), r.lease_holder ?? "-"]));
-}
 function renderGrants(rows) {
   return renderTable(["subject", "path", "grade"], rows.map((r) => [r.subject, r.path_prefix, r.access]));
 }
@@ -1845,6 +1842,59 @@ function renderRoleBindings(rows) {
 }
 function renderLeases(rows) {
   return renderTable(["path", "holder", "expires"], rows.map((r) => [r.path, r.holder, new Date(r.lease_expires).toISOString()]));
+}
+function humanSize(bytes) {
+  if (bytes < 1024)
+    return `${bytes}B`;
+  const kb = bytes / 1024;
+  if (kb < 1024)
+    return `${kb.toFixed(1)}KB`;
+  const mb = kb / 1024;
+  if (mb < 1024)
+    return `${mb.toFixed(1)}MB`;
+  return `${(mb / 1024).toFixed(1)}GB`;
+}
+function fmtTTL(remainingMs) {
+  const totalSec = Math.floor(remainingMs / 1000);
+  if (totalSec < 60)
+    return `${totalSec}s`;
+  return `${Math.floor(totalSec / 60)}m`;
+}
+function fmtLeaseCell(lease, now) {
+  if (!lease)
+    return "-";
+  const remainingMs = lease.lease_expires - now;
+  if (remainingMs <= 0)
+    return "-";
+  return `${lease.holder} ${fmtTTL(remainingMs)}`;
+}
+function renderWorkspace(opts) {
+  const { roomId, posture, into, rows, leases, localSizes, policyFor: policyFor2, now, recent = [] } = opts;
+  const totalBytes = rows.reduce((sum, r) => sum + r.size, 0);
+  const hydratedPaths = rows.filter((r) => localSizes[r.path] !== undefined);
+  const hydratedBytes = hydratedPaths.reduce((sum, r) => sum + localSizes[r.path], 0);
+  const leaseByPath = new Map(leases.map((l) => [l.path, l]));
+  const lines = [
+    `room ${roomId} · posture ${posture}`,
+    `local dir ${into} — ${rows.length} files · ${humanSize(totalBytes)} in room · ${hydratedPaths.length} hydrated locally (${humanSize(hydratedBytes)})`,
+    "",
+    renderTable(["path", "size", "policy", "tip", "lease", "editing", "local"], rows.map((r) => {
+      const localSize = localSizes[r.path];
+      return [
+        r.path,
+        humanSize(r.size),
+        policyFor2(r.path),
+        String(r.tip_seq),
+        fmtLeaseCell(leaseByPath.get(r.path), now),
+        r.lease_holder ?? "-",
+        localSize === undefined ? "-" : humanSize(localSize)
+      ];
+    }))
+  ];
+  if (recent.length > 0)
+    lines.push("", "recent:", ...recent.map((l) => `  ${l}`));
+  return lines.join(`
+`);
 }
 
 // src/chat.ts
@@ -2432,7 +2482,7 @@ async function fsPutOcc(client, repopath, bytes) {
 }
 
 // src/main.ts
-import { readFileSync as readFileSync4, writeFileSync as writeFileSync4, mkdirSync as mkdirSync5 } from "node:fs";
+import { readFileSync as readFileSync4, writeFileSync as writeFileSync4, mkdirSync as mkdirSync5, statSync } from "node:fs";
 import * as os2 from "node:os";
 import { resolve as resolve2, join as join4, dirname as dirname5, sep as sep2 } from "node:path";
 
@@ -8335,6 +8385,19 @@ async function hydrateSubtree(client, prefix, into) {
   }
   return written;
 }
+function localSizes(paths, into) {
+  const base = resolve2(into);
+  const sizes = {};
+  for (const path3 of paths) {
+    const dest = resolve2(into, path3);
+    if (dest !== base && !dest.startsWith(base + sep2))
+      continue;
+    try {
+      sizes[path3] = statSync(dest).size;
+    } catch {}
+  }
+  return sizes;
+}
 async function cmdKeygen(args2) {
   let id2 = flag2(args2, "id");
   if (!id2) {
@@ -8947,6 +9010,34 @@ async function cmdFetch(args2) {
   await unpackInto(bytes, dest);
   ok3(`Extracted to ${dest}`);
 }
+function cancelableDelay(ms) {
+  const { promise, resolve: resolve3 } = Promise.withResolvers();
+  const timer = setTimeout(resolve3, ms);
+  return { promise, cancel: () => {
+    clearTimeout(timer);
+    resolve3();
+  } };
+}
+function startTicker(ms, onTick) {
+  let stopped = false;
+  let cancelCurrent = () => {};
+  const loop = (async () => {
+    while (!stopped) {
+      const d = cancelableDelay(ms);
+      cancelCurrent = d.cancel;
+      await d.promise;
+      if (!stopped)
+        onTick();
+    }
+  })();
+  return {
+    stop: async () => {
+      stopped = true;
+      cancelCurrent();
+      await loop;
+    }
+  };
+}
 var FS_CMDS = {
   put: async (client, args2) => {
     const localPath = args2.positional[0];
@@ -8966,14 +9057,97 @@ var FS_CMDS = {
   },
   ls: async (client, args2) => {
     const prefix = args2.positional[0];
-    const t = await client.getTree(prefix);
-    if ("error" in t)
-      die3(`fs ls: [${t.error}] ${t.detail}`);
-    if (t.tree.length === 0) {
-      ok3("(empty tree)");
+    const follow = flagBool(args2, "f");
+    const into = flag2(args2, "into") ?? ".mesh/fs";
+    const [treeResult, leasesResult, state] = await Promise.all([
+      client.getTree(prefix),
+      client.listLeases(),
+      client.getState()
+    ]);
+    if ("error" in treeResult)
+      die3(`fs ls: [${treeResult.error}] ${treeResult.detail}`);
+    if (!Array.isArray(leasesResult))
+      die3(`fs ls: [${leasesResult.error}] ${leasesResult.detail}`);
+    let rows = treeResult.tree;
+    let leases = leasesResult;
+    const posture = state.defaults.default_access ?? "open";
+    const render = (recent = []) => renderWorkspace({
+      roomId: client.roomId,
+      posture,
+      into,
+      rows,
+      leases,
+      localSizes: localSizes(rows.map((r) => r.path), into),
+      policyFor,
+      now: Date.now(),
+      recent
+    });
+    ok3(render());
+    if (!follow)
       return;
+    const refetch = async () => {
+      const [t, freshLeases] = await Promise.all([client.getTree(prefix), client.listLeases()]);
+      if ("error" in t) {
+        process.stderr.write(`fs ls: [${t.error}] ${t.detail}
+`);
+        return;
+      }
+      if (!Array.isArray(freshLeases)) {
+        process.stderr.write(`fs ls: [${freshLeases.error}] ${freshLeases.detail}
+`);
+        return;
+      }
+      rows = t.tree;
+      leases = freshLeases;
+    };
+    const tty = process.stdout.isTTY ?? false;
+    let since = state.head.seq;
+    if (tty) {
+      const recentLines = [];
+      let senderWidth;
+      const redraw = () => {
+        process.stdout.write("\x1B[2J\x1B[H");
+        ok3(render(recentLines));
+      };
+      let refetchPending = false;
+      const scheduleRefetch = () => {
+        if (refetchPending)
+          return;
+        refetchPending = true;
+        setTimeout(() => {
+          refetchPending = false;
+          refetch().then(redraw);
+        }, 300);
+      };
+      const ticker = startTicker(5000, redraw);
+      try {
+        for await (const frame of client.follow(since)) {
+          if (frame.type === "entry" && isFilePlaneEntry(frame.entry.submission.performative)) {
+            since = frame.entry.seq;
+            if (senderWidth === undefined)
+              senderWidth = Math.min(28, Math.max(12, frame.entry.submission.sender.length));
+            recentLines.push(renderEntry(frame.entry, { senderWidth }));
+            if (recentLines.length > 6)
+              recentLines.shift();
+            scheduleRefetch();
+          }
+        }
+      } finally {
+        await ticker.stop();
+      }
+    } else {
+      const footer = ansi(DIM, "— streaming fs entries (Ctrl+C to exit) —");
+      ok3(footer);
+      let senderWidth;
+      for await (const frame of client.follow(since)) {
+        if (frame.type === "entry" && isFilePlaneEntry(frame.entry.submission.performative)) {
+          since = frame.entry.seq;
+          if (senderWidth === undefined)
+            senderWidth = Math.min(28, Math.max(12, frame.entry.submission.sender.length));
+          ok3(renderEntry(frame.entry, { senderWidth }));
+        }
+      }
     }
-    ok3(renderTree(t.tree, policyFor));
   },
   get: async (client, args2) => {
     const repopath = args2.positional[0];
@@ -9217,7 +9391,7 @@ async function cmdFs(args2) {
   });
   const handler = sub ? FS_CMDS[sub] : undefined;
   if (!handler) {
-    die3(`usage: mesh fs put <path> [--as <repopath>] | ls [<prefix>] | get <repopath> [--into <dir>] | rm <repopath> | edit <path> [--into <dir>] | lock <path> | unlock <path> | grep <query> [--prefix <path-prefix>] [--limit <n>] [--hydrate [--into <dir>]] | hydrate [<prefix>] [--into <dir>] | grant <subject> <path> <grade> | grants | revoke <subject> <path> | role <participant> <role> | roles | role-rm <participant> <role> | leases | config <open|closed> | deps <path> | request <path> [--grade read]
+    die3(`usage: mesh fs put <path> [--as <repopath>] | ls [<prefix>] [-f] [--into <dir>] | get <repopath> [--into <dir>] | rm <repopath> | edit <path> [--into <dir>] | lock <path> | unlock <path> | grep <query> [--prefix <path-prefix>] [--limit <n>] [--hydrate [--into <dir>]] | hydrate [<prefix>] [--into <dir>] | grant <subject> <path> <grade> | grants | revoke <subject> <path> | role <participant> <role> | roles | role-rm <participant> <role> | leases | config <open|closed> | deps <path> | request <path> [--grade read]
   write policy by extension: code (.ts .js .py .go .rs …) -> merge on \`put\` · prose (.md .txt) -> shared CRDT via \`edit\` · opt-in serialize: \`lock\`/\`unlock\`
   grades: discover < read < write < exclusive`);
   }
@@ -9405,7 +9579,7 @@ tasks:
 
 files:
   fs put <path> [--as <repopath>]                           Upload file to the shared workspace (OCC merge-on-write)
-  fs ls [<prefix>]                                          List the shared workspace tree
+  fs ls [<prefix>] [-f] [--into <dir>]                      List the shared workspace tree (-f: live view — tree, leases, hydration)
   fs get <repopath> [--into <dir>]                          Hydrate a file from the workspace (default: .mesh/fs)
   fs rm <repopath>                                          Delete a file from the workspace
   fs edit <path> [--into <dir>]                             Subscribe + edit a live Yjs doc (Ctrl+C to exit)
@@ -9598,6 +9772,7 @@ main().catch((err2) => {
 export {
   resolveFetchRef,
   resolveDeliverMode,
+  localSizes,
   isFilePlaneEntry,
   hydrateSubtree,
   hydrateGrepWinners,

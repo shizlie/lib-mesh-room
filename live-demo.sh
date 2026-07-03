@@ -168,13 +168,17 @@ EOF
 setup_agent hermes@router   routing  router.md          request  "$SESSION:0.0"
 setup_agent webby@frontend  frontend frontend.md        announce "$SESSION:0.1"
 
-# ── tmux stage: router pane | worker pane | live log feed ────────────────────────
+# ── tmux stage: router | worker | talk feed + share view ─────────────────────────
 tmux kill-session -t "$SESSION" 2>/dev/null || true
 tmux new-session  -d -s "$SESSION" -x 200 -y 50
 tmux split-window -t "$SESSION:0.0" -v
 tmux split-window -t "$SESSION:0.1" -v
 tmux select-layout -t "$SESSION:0" even-vertical
 tmux send-keys -t "$SESSION:0.2" "MESH_HOME='$LIVE/harry' $MESH log -f --room $ROOM_ID" Enter
+# Share plane, live: the workspace tree + leases + hydration next to the talk feed —
+# watch webby's delivered files appear in the metadata tree as they land.
+tmux split-window -t "$SESSION:0.2" -h
+tmux send-keys -t "$SESSION:0.3" "MESH_HOME='$LIVE/harry' $MESH fs ls -f --room $ROOM_ID --into '$LIVE/harry-fs'" Enter
 
 # Launch both live Claude agents and accept the folder-trust prompt.
 tmux send-keys -t "$SESSION:0.0" "bash $LIVE/launch-hermes.sh" Enter
@@ -200,7 +204,8 @@ cat <<EOF
 Live agent mesh is up.  Room: $ROOM_ID
 
 Watch it:   tmux attach -t $SESSION
-            (pane 0 = router agent, pane 1 = worker agent, pane 2 = room log)
+            (pane 0 = router agent, pane 1 = worker agent,
+             pane 2 = room log — the talk feed, pane 3 = live workspace — the share view)
 
 Trigger it (this is the whole demo — one human sentence):
   MESH_HOME=$LIVE/harry $MESH post --room $ROOM_ID "I need a homepage"

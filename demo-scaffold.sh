@@ -229,6 +229,10 @@ if [ -z "$NO_AGENTS" ]; then
   tmux split-window -t "$SESSION:0.1" -v
   tmux select-layout -t "$SESSION:0" even-vertical
   tmux send-keys -t "$SESSION:0.2" "MESH_HOME='$OWNER_HOME' $MESH log -f --room $ROOM_ID" Enter
+  # Share plane, live: workspace tree + leases + hydration beside the talk feed —
+  # watch the fixer's put land in the metadata tree in real time.
+  tmux split-window -t "$SESSION:0.2" -h
+  tmux send-keys -t "$SESSION:0.3" "MESH_HOME='$OWNER_HOME' $MESH fs ls -f --room $ROOM_ID --into '$LIVE/owner-fs'" Enter
   tmux send-keys -t "$SESSION:0.0" "bash $LIVE/launch-fixer.sh" Enter
   tmux send-keys -t "$SESSION:0.1" "bash $LIVE/launch-reviewer.sh" Enter
   echo "Launching agents (waiting for TUIs + trust prompt) ..."
@@ -264,19 +268,20 @@ cat <<EOF
     serialize one file when needed      →  mesh fs lock <path>   (exclusive lease)
 
   INSPECT THE WORKSPACE  (any participant, any machine — no copy, no tarball)
-    MESH_HOME=$OWNER_HOME $MESH fs ls
+    MESH_HOME=$OWNER_HOME $MESH fs ls -f                  # LIVE view: tree · leases · hydration
     MESH_HOME=$OWNER_HOME $MESH fs grep "done = true"     # find the bug, server-side
-    MESH_HOME=$OWNER_HOME $MESH fs get src/todos.ts       # pull just that file
+    MESH_HOME=$OWNER_HOME $MESH fs get src/todos.ts       # pull just that file (bytes on demand)
 
   KICK IT OFF  (one human sentence — the whole demo)
     $ANNOUNCE_CMD
 
   Then: fixer wakes → reads the shared workspace → fixes src/todos.ts → puts it
   back (reviewer sees it LIVE) → delivers.  reviewer inspects via 'mesh fs get'
-  + 'bun test' → accepts.  Watch files change with 'mesh fs ls' / 'mesh fs get'.
+  + 'bun test' → accepts.  Eyeball both planes live: 'mesh log -f' (talk) and
+  'mesh fs ls -f' (share — tree, leases, hydration).
 EOF
 if [ -z "$NO_AGENTS" ]; then
-  echo "  Watch the agents:  tmux attach -t $SESSION"
+  echo "  Watch the agents:  tmux attach -t $SESSION   (pane 2 = talk feed, pane 3 = live workspace)"
 else
   cat <<EOF
   (--no-agents) Drive the teammates by hand from their homes:
