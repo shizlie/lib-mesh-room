@@ -13581,7 +13581,7 @@ var require_dist = __commonJS((exports, module) => {
 });
 
 // src/main.ts
-import { readFileSync as readFileSync5, existsSync as existsSync4, statSync as statSync4 } from "node:fs";
+import { readFileSync as readFileSync5, existsSync as existsSync4, statSync as statSync3 } from "node:fs";
 import { mkdirSync as mkdirSync3, openSync, writeFileSync as writeFileSync3, rmSync as rmSync2, realpathSync as realpathSync2 } from "node:fs";
 import { join as join4, resolve as resolve2 } from "node:path";
 import { homedir as homedir2 } from "node:os";
@@ -15256,7 +15256,7 @@ class Heartbeater {
 }
 
 // src/liveness.ts
-import { statSync } from "node:fs";
+import { stat } from "node:fs/promises";
 function assessCondition(i) {
   if (i.heldCount === 0)
     return null;
@@ -15353,7 +15353,7 @@ class LivenessMonitor {
       probe,
       heldCount: held.length,
       msSinceSelfAppend: this.lastAppendMs === null ? Infinity : now - this.lastAppendMs,
-      hookFreshMs: this._hookAgeMs(now),
+      hookFreshMs: await this._hookAgeMs(now),
       stuckAfterMs: this.opts.stuckAfterMs
     });
     if (cond === null) {
@@ -15381,11 +15381,12 @@ class LivenessMonitor {
     this.lastPublished = cond;
     this.lastPublishMs = now;
   }
-  _hookAgeMs(now) {
+  async _hookAgeMs(now) {
     if (this.opts.hookStateFile === null)
       return null;
     try {
-      return now - statSync(this.opts.hookStateFile).mtimeMs;
+      const st = await stat(this.opts.hookStateFile);
+      return now - st.mtimeMs;
     } catch {
       return null;
     }
@@ -15500,7 +15501,7 @@ function createOmpInjector(opts) {
 }
 
 // src/injectors/state.ts
-import { statSync as statSync2, readFileSync as readFileSync3 } from "node:fs";
+import { statSync, readFileSync as readFileSync3 } from "node:fs";
 var AGENT_STATE_FILE = "agent_state";
 function readHookState(file, busyStaleMs) {
   let raw;
@@ -15514,7 +15515,7 @@ function readHookState(file, busyStaleMs) {
   if (raw !== "busy")
     return null;
   try {
-    const ageMs = Date.now() - statSync2(file).mtimeMs;
+    const ageMs = Date.now() - statSync(file).mtimeMs;
     return ageMs <= busyStaleMs ? "busy" : null;
   } catch {
     return null;
@@ -15911,7 +15912,7 @@ class MeshClient {
 
 // src/ipc.ts
 import { createServer } from "node:net";
-import { existsSync as existsSync3, unlinkSync, statSync as statSync3, chmodSync as chmodSync3 } from "node:fs";
+import { existsSync as existsSync3, unlinkSync, statSync as statSync2, chmodSync as chmodSync3 } from "node:fs";
 import { basename as pathBasename } from "node:path";
 
 // src/fs-shim.ts
@@ -16409,7 +16410,7 @@ function startIpcServer(opts) {
       abortServer(`chmod 0600 failed: ${String(err2)}`);
       return;
     }
-    const mode = statSync3(socketPath).mode & 511;
+    const mode = statSync2(socketPath).mode & 511;
     if ((mode & 63) !== 0) {
       abortServer(`socket mode is ${mode.toString(8)}, expected 0600 — aborting`);
       return;
@@ -29716,6 +29717,7 @@ function createMcpServer(socketPath) {
       artifacts: exports_external.array(exports_external.string()).optional().describe('Artifact refs — REQUIRED for deliver (e.g. ["pr://org/repo/42", "git:repo@sha"])'),
       data: exports_external.record(exports_external.unknown()).optional().describe(`Performative-specific payload.
 ` + `announce: {mode:"volunteer", lease_ttl_s?, verdict_by?}
+` + `signal: {condition:"working"|"stuck"|"gone"}
 ` + `file.write: {path: "src/foo.ts", content_hash: "r2:<64-hex-sha256>", size: <bytes>}
 ` + `file.delete: {path: "src/foo.ts"}
 ` + `file.lock:   {path: "src/foo.ts"} — acquires exclusive lease
@@ -30241,10 +30243,14 @@ async function cmdRun(configPath, opts) {
     };
     const heartbeater2 = new Heartbeater(client, noopInjector, config2.identity.id, config2.heartbeat.interval_s * 1000, (err2) => {
       console.error("[meshl] heartbeat error:", err2);
+    }, (err2) => {
+      console.error("[meshl] heartbeat: room gone/unauthorized — stopping monitor:", err2);
     });
     heartbeater2.start();
     const liveness2 = config2.liveness.publish ? new LivenessMonitor(client, noopInjector, config2.identity.id, livenessOptsFrom(config2, stateDir), (err2) => {
       console.error("[meshl] liveness error:", err2);
+    }, (err2) => {
+      console.error("[meshl] liveness: room gone/unauthorized — stopping monitor:", err2);
     }) : null;
     liveness2?.start();
     const { promise: promise2, resolve: resolve3 } = Promise.withResolvers();
@@ -30509,7 +30515,7 @@ async function cmdStatus(configPath) {
     const stateFile = join4(stateDir, AGENT_STATE_FILE);
     try {
       const raw = readFileSync5(stateFile, "utf8").trim();
-      const ageS = Math.round((Date.now() - statSync4(stateFile).mtimeMs) / 1000);
+      const ageS = Math.round((Date.now() - statSync3(stateFile).mtimeMs) / 1000);
       hookState = raw === "busy" && ageS * 1000 > staleMs ? `busy (age ${ageS}s — STALE > ${Math.round(staleMs / 1000)}s, ignored → scrape)` : `${raw} (age ${ageS}s)`;
     } catch {
       hookState = `<none> — no hook installed; using scrape fallback (install: meshl hooks)`;

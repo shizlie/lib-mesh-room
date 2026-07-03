@@ -1756,6 +1756,9 @@ var PERF_STYLE = {
 function truncate(s, max) {
   return s.length <= max ? s : s.slice(0, max - 1) + "…";
 }
+function scrubControl(s) {
+  return s.replace(/[\x00-\x1f\x7f]/g, "");
+}
 function fmtTime(isoTs) {
   const t = isoTs.slice(11, 19);
   return t.length === 8 ? t : isoTs;
@@ -1881,12 +1884,12 @@ function renderWorkspace(opts) {
     renderTable(["path", "size", "policy", "tip", "lease", "editing", "local"], rows.map((r) => {
       const localSize = localSizes[r.path];
       return [
-        r.path,
+        scrubControl(r.path),
         humanSize(r.size),
         policyFor2(r.path),
         String(r.tip_seq),
-        fmtLeaseCell(leaseByPath.get(r.path), now),
-        r.lease_holder ?? "-",
+        scrubControl(fmtLeaseCell(leaseByPath.get(r.path), now)),
+        scrubControl(r.lease_holder ?? "-"),
         localSize === undefined ? "-" : humanSize(localSize)
       ];
     }))
@@ -9010,6 +9013,9 @@ async function cmdFetch(args2) {
   await unpackInto(bytes, dest);
   ok3(`Extracted to ${dest}`);
 }
+var REFETCH_DEBOUNCE_MS = 300;
+var TICK_MS = 5000;
+var RECENT_LINES_CAP = 6;
 function cancelableDelay(ms) {
   const { promise, resolve: resolve3 } = Promise.withResolvers();
   const timer = setTimeout(resolve3, ms);
@@ -9037,6 +9043,17 @@ function startTicker(ms, onTick) {
       await loop;
     }
   };
+}
+async function followFilePlane(client, since, onLine) {
+  let senderWidth;
+  for await (const frame of client.follow(since)) {
+    if (frame.type === "entry" && isFilePlaneEntry(frame.entry.submission.performative)) {
+      since = frame.entry.seq;
+      if (senderWidth === undefined)
+        senderWidth = Math.min(28, Math.max(12, frame.entry.submission.sender.length));
+      onLine(scrubControl(renderEntry(frame.entry, { senderWidth })), since);
+    }
+  }
 }
 var FS_CMDS = {
   put: async (client, args2) => {
@@ -9070,6 +9087,7 @@ var FS_CMDS = {
       die3(`fs ls: [${leasesResult.error}] ${leasesResult.detail}`);
     let rows = treeResult.tree;
     let leases = leasesResult;
+    let cachedLocalSizes = localSizes(rows.map((r) => r.path), into);
     const posture = state.defaults.default_access ?? "open";
     const render = (recent = []) => renderWorkspace({
       roomId: client.roomId,
@@ -9077,7 +9095,7 @@ var FS_CMDS = {
       into,
       rows,
       leases,
-      localSizes: localSizes(rows.map((r) => r.path), into),
+      localSizes: cachedLocalSizes,
       policyFor,
       now: Date.now(),
       recent
@@ -9099,54 +9117,45 @@ var FS_CMDS = {
       }
       rows = t.tree;
       leases = freshLeases;
+      cachedLocalSizes = localSizes(rows.map((r) => r.path), into);
     };
     const tty = process.stdout.isTTY ?? false;
-    let since = state.head.seq;
+    const since = state.head.seq;
     if (tty) {
       const recentLines = [];
-      let senderWidth;
       const redraw = () => {
         process.stdout.write("\x1B[2J\x1B[H");
         ok3(render(recentLines));
       };
       let refetchPending = false;
+      let debounceTimer;
       const scheduleRefetch = () => {
         if (refetchPending)
           return;
         refetchPending = true;
-        setTimeout(() => {
+        debounceTimer = setTimeout(() => {
           refetchPending = false;
           refetch().then(redraw);
-        }, 300);
+        }, REFETCH_DEBOUNCE_MS);
       };
-      const ticker = startTicker(5000, redraw);
+      const ticker = startTicker(TICK_MS, redraw);
       try {
-        for await (const frame of client.follow(since)) {
-          if (frame.type === "entry" && isFilePlaneEntry(frame.entry.submission.performative)) {
-            since = frame.entry.seq;
-            if (senderWidth === undefined)
-              senderWidth = Math.min(28, Math.max(12, frame.entry.submission.sender.length));
-            recentLines.push(renderEntry(frame.entry, { senderWidth }));
-            if (recentLines.length > 6)
-              recentLines.shift();
-            scheduleRefetch();
-          }
-        }
+        await followFilePlane(client, since, (line) => {
+          recentLines.push(line);
+          if (recentLines.length > RECENT_LINES_CAP)
+            recentLines.shift();
+          scheduleRefetch();
+        });
       } finally {
+        clearTimeout(debounceTimer);
         await ticker.stop();
       }
     } else {
       const footer = ansi(DIM, "— streaming fs entries (Ctrl+C to exit) —");
       ok3(footer);
-      let senderWidth;
-      for await (const frame of client.follow(since)) {
-        if (frame.type === "entry" && isFilePlaneEntry(frame.entry.submission.performative)) {
-          since = frame.entry.seq;
-          if (senderWidth === undefined)
-            senderWidth = Math.min(28, Math.max(12, frame.entry.submission.sender.length));
-          ok3(renderEntry(frame.entry, { senderWidth }));
-        }
-      }
+      await followFilePlane(client, since, (line) => {
+        ok3(line);
+      });
     }
   },
   get: async (client, args2) => {
