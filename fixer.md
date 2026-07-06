@@ -36,20 +36,11 @@ one-line message starting with `[mesh]` into this session — your wake signal. 
 mesh inbox --mark
 ```
 
-This drains new room events and advances your read cursor. Read them, then act per the
-lifecycle below. Do nothing else until you have run it. The **task ref** is the short token
-right after the performative (`ANNOUNCE`/`CLAIM`/…), e.g. `fix-toggle` — never the `[NNNN]`
-sequence number.
-
-## Claiming policy
-
-After `mesh inbox --mark`, for each task still `ANNOUNCED`:
-
-- **A code fix / backend bug → claim it immediately.** First valid claim wins (CAS), so do not
-  deliberate. `claim_conflict` means another agent won the race — stop, that is a correct
-  outcome, not an error.
-- **Page/UI work → not yours.** Leave it for a frontend specialist.
-- Hold **one** claim at a time. NEVER claim a task whose `verdict_by` needs a role you lack.
+Then run `mesh brief` — it shows this room's charter, your seat's contract (claiming policy —
+which tasks are yours, how to claim), and your current situation (what's open to claim right
+now) in one call. Do nothing else until you have run both. The **task ref** is the short
+token right after the performative (`ANNOUNCE`/`CLAIM`/…), e.g. `fix-toggle` — never the
+`[NNNN]` sequence number.
 
 ```
 mesh claim <task_ref>

@@ -13581,9 +13581,9 @@ var require_dist = __commonJS((exports, module) => {
 });
 
 // src/main.ts
-import { readFileSync as readFileSync5, existsSync as existsSync4, statSync as statSync3 } from "node:fs";
-import { mkdirSync as mkdirSync3, openSync, writeFileSync as writeFileSync3, rmSync as rmSync2, realpathSync as realpathSync2 } from "node:fs";
-import { join as join4, resolve as resolve2 } from "node:path";
+import { readFileSync as readFileSync6, existsSync as existsSync5, statSync as statSync3 } from "node:fs";
+import { mkdirSync as mkdirSync3, openSync, writeFileSync as writeFileSync4, rmSync as rmSync2, realpathSync as realpathSync2 } from "node:fs";
+import { join as join5, resolve as resolve2 } from "node:path";
 import { homedir as homedir2 } from "node:os";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
@@ -13739,16 +13739,26 @@ function parseGate(raw) {
   return out;
 }
 function parseWake(r) {
-  if (typeof r["debounce_s"] !== "number")
-    throw new ConfigError("wake.debounce_s is required (number)");
-  if (typeof r["max_digest_events"] !== "number")
-    throw new ConfigError("wake.max_digest_events is required (number)");
+  const debounceRaw = r["debounce_s"];
+  let debounce_s = 1;
+  if (debounceRaw !== undefined) {
+    if (typeof debounceRaw !== "number" || !(debounceRaw > 0))
+      throw new ConfigError("wake.debounce_s must be a positive number");
+    debounce_s = debounceRaw;
+  }
+  const maxDigestRaw = r["max_digest_events"];
+  let max_digest_events = 20;
+  if (maxDigestRaw !== undefined) {
+    if (typeof maxDigestRaw !== "number" || !(maxDigestRaw > 0))
+      throw new ConfigError("wake.max_digest_events must be a positive number");
+    max_digest_events = maxDigestRaw;
+  }
   const backend = r["backend"];
   if (backend !== "tmux" && backend !== "mcp" && backend !== "hybrid")
     throw new ConfigError("wake.backend must be 'tmux', 'mcp', or 'hybrid'");
   const out = {
-    debounce_s: r["debounce_s"],
-    max_digest_events: r["max_digest_events"],
+    debounce_s,
+    max_digest_events,
     backend
   };
   if (r["hook_busy_stale_s"] !== undefined) {
@@ -13871,9 +13881,25 @@ function validateConfig(raw) {
       }
     }
   }
+  const brief = { reanchor_after_s: 3600, arrival_pointer: true };
+  if (r["brief"] !== undefined) {
+    if (!isObj(r["brief"]))
+      throw new ConfigError("brief must be a mapping");
+    const rb = r["brief"];
+    if (rb["reanchor_after_s"] !== undefined) {
+      if (typeof rb["reanchor_after_s"] !== "number")
+        throw new ConfigError("brief.reanchor_after_s must be a number");
+      brief.reanchor_after_s = rb["reanchor_after_s"];
+    }
+    if (rb["arrival_pointer"] !== undefined) {
+      if (typeof rb["arrival_pointer"] !== "boolean")
+        throw new ConfigError("brief.arrival_pointer must be a boolean");
+      brief.arrival_pointer = rb["arrival_pointer"];
+    }
+  }
   if (typeof r["state_dir"] !== "string")
     throw new ConfigError("state_dir is required (string)");
-  return { identity: identity2, room, subscriptions, gate, wake, heartbeat, liveness, state_dir: r["state_dir"] };
+  return { identity: identity2, room, subscriptions, gate, wake, heartbeat, liveness, brief, state_dir: r["state_dir"] };
 }
 function loadConfig(path) {
   let text;
@@ -14758,6 +14784,30 @@ function signSubmission(sub, secretKeyBytes) {
   return encodeSig(sigBytes);
 }
 // ../proto/src/path.ts
+var WINDOWS_RESERVED = {
+  con: true,
+  prn: true,
+  aux: true,
+  nul: true,
+  com1: true,
+  com2: true,
+  com3: true,
+  com4: true,
+  com5: true,
+  com6: true,
+  com7: true,
+  com8: true,
+  com9: true,
+  lpt1: true,
+  lpt2: true,
+  lpt3: true,
+  lpt4: true,
+  lpt5: true,
+  lpt6: true,
+  lpt7: true,
+  lpt8: true,
+  lpt9: true
+};
 function normalizeId(path) {
   return path.normalize("NFC").replace(/\\/g, "/").split("/").filter((s) => s.length > 0).map((s) => s.toLowerCase()).join("/");
 }
@@ -14866,6 +14916,76 @@ function matchesWatch(watch, entry) {
   }
   return true;
 }
+// ../proto/src/charter.ts
+var CHARTER_ROOM_PATH = "charter/room.md";
+var CHARTER_ROLES_PREFIX = "charter/roles/";
+function sanitizeRoleSegment(role) {
+  const percentEncode = (ch) => "%" + ch.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0");
+  let encoded = role.replace(/%/g, percentEncode).replace(/[<>:"|?*]/g, percentEncode).replace(/[\/\\]/g, percentEncode).replace(/[\x00-\x1f\x7f]/g, percentEncode);
+  const stem = encoded.includes(".") ? encoded.slice(0, encoded.indexOf(".")) : encoded;
+  if (WINDOWS_RESERVED[stem.toLowerCase()] === true) {
+    encoded = percentEncode(encoded[0]) + encoded.slice(1);
+  }
+  return encoded;
+}
+function charterRolePath(role) {
+  return `${CHARTER_ROLES_PREFIX}${sanitizeRoleSegment(role)}.md`;
+}
+// ../proto/src/roles.ts
+function myRoles(bindings, selfId) {
+  const seen = new Set;
+  const roles = [];
+  for (const b of bindings) {
+    if (b.participant === selfId && b.in_window && !seen.has(b.role)) {
+      seen.add(b.role);
+      roles.push(b.role);
+    }
+  }
+  return roles;
+}
+// ../proto/src/duties.ts
+var DEP_SATISFIED = new Set(["DELIVERED", "DONE"]);
+function computeDuties(claims, selfId, roles) {
+  const stateByRef = new Map(claims.map((c) => [c.task_ref, c.state]));
+  const depsSatisfied = (deps) => deps.every((d) => {
+    const st = stateByRef.get(d);
+    return st !== undefined && DEP_SATISFIED.has(st);
+  });
+  const isVerdictMine = (verdictBy) => verdictBy.some((v) => v === selfId || roles.includes(v));
+  const claimable = [];
+  const verdict = [];
+  const ready = [];
+  for (const c of claims) {
+    if (c.state === "ANNOUNCED" && !c.holder && depsSatisfied(c.depends_on)) {
+      claimable.push(c.task_ref);
+    } else if (c.state === "DELIVERED" && isVerdictMine(c.verdict_by)) {
+      verdict.push(c.task_ref);
+    } else if (c.state === "CLAIMED" && c.holder === selfId && c.depends_on.length > 0 && depsSatisfied(c.depends_on)) {
+      ready.push(c.task_ref);
+    }
+  }
+  return { claimable, verdict, ready };
+}
+function dutiesSignature(d) {
+  const norm = (a) => [...a].sort().join(",");
+  return `c:${norm(d.claimable)}|v:${norm(d.verdict)}|r:${norm(d.ready)}`;
+}
+function dutyParts(d) {
+  const parts = [];
+  if (d.verdict.length)
+    parts.push(`awaiting your verdict (accept/reject): ${d.verdict.join(", ")}`);
+  if (d.ready.length)
+    parts.push(`dependencies delivered — proceed/deliver: ${d.ready.join(", ")}`);
+  if (d.claimable.length)
+    parts.push(`open to claim: ${d.claimable.join(", ")}`);
+  return parts;
+}
+function formatDuties(d) {
+  const parts = dutyParts(d);
+  if (parts.length === 0)
+    return null;
+  return `[mesh] duties — ${parts.join(" · ")}. Run \`mesh inbox\`/\`mesh state\`, then claim/deliver/accept.`;
+}
 // src/attention.ts
 function matchesT0(entry, config, selfId) {
   const sub = entry.submission;
@@ -14903,6 +15023,48 @@ async function gate(survivors, config) {
   return survivors;
 }
 
+// ../cli/src/render.ts
+var C2 = {
+  cyan: "\x1B[36m",
+  white: "\x1B[37m",
+  yellow: "\x1B[33m",
+  blue: "\x1B[34m",
+  green: "\x1B[32m",
+  red: "\x1B[31m",
+  magenta: "\x1B[35m",
+  brightGreen: "\x1B[92m",
+  brightRed: "\x1B[91m",
+  brightBlue: "\x1B[94m",
+  grey: "\x1B[90m"
+};
+var PERF_STYLE = {
+  request: { label: "request", color: C2.cyan },
+  inform: { label: "inform", color: C2.white },
+  deliver: { label: "deliver", color: C2.green, bold: true },
+  announce: { label: "announce", color: C2.yellow, bold: true },
+  claim: { label: "claim", color: C2.brightBlue, bold: true },
+  release: { label: "release", color: C2.magenta, bold: true },
+  accept: { label: "accept", color: C2.brightGreen, bold: true },
+  reject: { label: "reject", color: C2.brightRed, bold: true },
+  escalate: { label: "escalate", color: C2.red, bold: true },
+  "system.genesis": { label: "genesis", color: C2.grey },
+  "system.join": { label: "join", color: C2.grey },
+  "system.leave": { label: "leave", color: C2.grey },
+  "system.roles": { label: "roles", color: C2.grey },
+  "system.grant": { label: "grant", color: C2.grey },
+  "system.role": { label: "role", color: C2.grey },
+  "system.config": { label: "config", color: C2.grey },
+  "system.lease_clear": { label: "lapse", color: C2.yellow },
+  "system.revoke": { label: "revoke", color: C2.red },
+  "key.rotate": { label: "rotate", color: C2.blue },
+  "decide.request": { label: "ask", color: C2.cyan, bold: true },
+  "decide.resolve": { label: "answer", color: C2.brightGreen, bold: true },
+  "system.decision_lapse": { label: "lapsed", color: C2.yellow }
+};
+function scrubControl(s) {
+  return s.replace(/[\x00-\x1f\x7f]/g, "");
+}
+
 // src/wake.ts
 function buildDigest(events, roomId, selfId, maxEvents) {
   const total = events.length;
@@ -14913,15 +15075,22 @@ function buildDigest(events, roomId, selfId, maxEvents) {
       return `@you in seq ${e.seq}`;
     }
     if (sub.task_ref !== undefined) {
+      const taskRef = scrubControl(sub.task_ref);
       if (sub.performative === "deliver") {
-        return `${sub.performative}(${sub.task_ref} by ${sub.sender})`;
+        return `${sub.performative}(${taskRef} by ${scrubControl(sub.sender)})`;
       }
-      return `${sub.performative}(${sub.task_ref})`;
+      return `${sub.performative}(${taskRef})`;
     }
     return sub.performative;
   });
   const countLabel = total === 1 ? "1 event" : `${total} events`;
-  return `[mesh] ${countLabel} in ${roomId}: ${parts.join(", ")}. ` + "Run `mesh inbox` for detail; act via mesh claim/deliver/post.";
+  return `[mesh] ${countLabel} in ${scrubControl(roomId)}: ${parts.join(", ")}. ` + "Run `mesh inbox` for detail; act via mesh claim/deliver/post.";
+}
+function buildArrivalPointer(id, roles, roomId) {
+  const safeId = scrubControl(id);
+  const safeRoomId = scrubControl(roomId);
+  const roleLabel = roles.length > 0 ? ` (roles: ${roles.map(scrubControl).join(", ")})` : "";
+  return `[mesh] briefing — you are ${safeId}${roleLabel} in ${safeRoomId}. Run \`mesh brief\`, then \`mesh inbox\`.`;
 }
 
 class Debouncer {
@@ -15411,6 +15580,10 @@ function checkLivenessCadence(cfg) {
   return null;
 }
 
+// src/reanchor.ts
+import { existsSync, readFileSync as readFileSync3, writeFileSync } from "node:fs";
+import { join as join2 } from "node:path";
+
 // src/injectors/tmux.ts
 import { execFile } from "node:child_process";
 function runTmux(args) {
@@ -15493,6 +15666,77 @@ async function injectWhenIdle(injector, line, opts = {}) {
   }
 }
 
+// src/reanchor.ts
+var LAST_WAKE_FILE = "last_wake.json";
+function isFirstWakeEver(stateDir) {
+  return !existsSync(join2(stateDir, "wake_cursor.json")) && !existsSync(join2(stateDir, LAST_WAKE_FILE));
+}
+function loadLastWakeTs(stateDir) {
+  try {
+    const raw = readFileSync3(join2(stateDir, LAST_WAKE_FILE), "utf8");
+    return JSON.parse(raw).ts;
+  } catch {
+    return null;
+  }
+}
+function stampWakeDelivered(stateDir, ts) {
+  writeFileSync(join2(stateDir, LAST_WAKE_FILE), JSON.stringify({ ts }));
+}
+function shouldReanchor(brief, lastWakeTs, now) {
+  if (!brief.arrival_pointer || brief.reanchor_after_s <= 0)
+    return false;
+  if (lastWakeTs === null)
+    return false;
+  return now - lastWakeTs >= brief.reanchor_after_s * 1000;
+}
+async function resolveMyRoles(client, selfId) {
+  try {
+    const rows = await client.listRoles();
+    return Array.isArray(rows) ? myRoles(rows, selfId) : [];
+  } catch {
+    return [];
+  }
+}
+async function buildWakeLine(config, client, stateDir, digest, now) {
+  const last = loadLastWakeTs(stateDir);
+  if (!shouldReanchor(config.brief, last, now))
+    return digest;
+  const roles = await resolveMyRoles(client, config.identity.id);
+  return buildArrivalPointer(config.identity.id, roles, config.room.id);
+}
+var wakeQueues = new Map;
+function withWakeLock(stateDir, fn) {
+  const priorSettled = (wakeQueues.get(stateDir) ?? Promise.resolve()).then(() => {
+    return;
+  }, () => {
+    return;
+  });
+  const result = priorSettled.then(fn);
+  wakeQueues.set(stateDir, result.then(() => {
+    return;
+  }, () => {
+    return;
+  }));
+  return result;
+}
+function injectOpts(config) {
+  return { busyRetryS: config.wake.tmux?.busy_retry_s, maxBusyWaitS: config.wake.tmux?.max_busy_wait_s };
+}
+async function deliverWake(config, client, injector, stateDir, digest, now) {
+  return withWakeLock(stateDir, async () => {
+    const line = await buildWakeLine(config, client, stateDir, digest, now);
+    const result = await injectWhenIdle(injector, line, injectOpts(config));
+    if (result === "injected")
+      stampWakeDelivered(stateDir, now);
+    return result;
+  });
+}
+async function stampWakeAfterPoke(stateDir, now) {
+  await withWakeLock(stateDir, async () => {
+    stampWakeDelivered(stateDir, now);
+  });
+}
+
 // src/injectors/claude-code.ts
 var CLAUDE_CODE_IDLE_REGEX = /^[❯>]\s*$/;
 var CLAUDE_CODE_BUSY_REGEX = /esc to interrupt/;
@@ -15511,12 +15755,12 @@ function createOmpInjector(opts) {
 }
 
 // src/injectors/state.ts
-import { statSync, readFileSync as readFileSync3 } from "node:fs";
+import { statSync, readFileSync as readFileSync4 } from "node:fs";
 var AGENT_STATE_FILE = "agent_state";
 function readHookState(file, busyStaleMs) {
   let raw;
   try {
-    raw = readFileSync3(file, "utf8").trim();
+    raw = readFileSync4(file, "utf8").trim();
   } catch {
     return null;
   }
@@ -15948,12 +16192,12 @@ class MeshClient {
 
 // src/ipc.ts
 import { createServer } from "node:net";
-import { existsSync as existsSync3, unlinkSync, statSync as statSync2, chmodSync as chmodSync3 } from "node:fs";
+import { existsSync as existsSync4, unlinkSync, statSync as statSync2, chmodSync as chmodSync3 } from "node:fs";
 import { basename as pathBasename } from "node:path";
 
 // src/fs-shim.ts
 import * as nodePath from "node:path";
-import { writeFileSync as writeFileSync2, chmodSync as chmodSync2, existsSync as existsSync2, realpathSync } from "node:fs";
+import { writeFileSync as writeFileSync3, chmodSync as chmodSync2, existsSync as existsSync3, realpathSync } from "node:fs";
 
 // ../cli/src/fs.ts
 function resolveNode(tree, repopath) {
@@ -16397,15 +16641,31 @@ function installShims(binDir, socketPath, workspace) {
   for (const tool of ["ls", "grep", "cat", "find"]) {
     const script = makeShimScript(tool, socketPath, workspace);
     const dest = nodePath.join(binDir, tool);
-    writeFileSync2(dest, script, { encoding: "utf8", mode: 493 });
+    writeFileSync3(dest, script, { encoding: "utf8", mode: 493 });
     chmodSync2(dest, 493);
   }
 }
 
+// ../cli/src/brief.ts
+async function authorOf(client, seq) {
+  try {
+    const result = await client.getEntries({ since: seq - 1, limit: 1 });
+    const entry = result.entries.find((e) => e.seq === seq);
+    return entry?.submission.sender ?? null;
+  } catch {
+    return null;
+  }
+}
+function buildBriefInput(state, selfId, roles, roomId, room, roleCharters) {
+  const duties = computeDuties(state.claims, selfId, roles);
+  const openDecisions = state.decisions.filter((d) => d.status === "open" && (d.authority.includes(`id:${selfId}`) || roles.some((r) => d.authority.includes(`role:${r}`)))).map((d) => ({ id: d.id, question: d.question }));
+  return { selfId, roomId, roles: [...roles], room, roleCharters, duties, openDecisions };
+}
+
 // src/ipc.ts
 function startIpcServer(opts) {
-  const { client, socketPath, selfId, cache } = opts;
-  if (existsSync3(socketPath)) {
+  const { client, socketPath, selfId, roomId, cache } = opts;
+  if (existsSync4(socketPath)) {
     try {
       unlinkSync(socketPath);
     } catch {}
@@ -16525,6 +16785,34 @@ function startIpcServer(opts) {
     }
     if (method === "room_roles") {
       return { roles: await client.listRoles() };
+    }
+    if (method === "room_brief") {
+      if (!cache)
+        throw { code: -32601, message: "room_brief: no workspace cache configured" };
+      const state = await client.getState();
+      const rolesResult = await client.listRoles();
+      const bindings = Array.isArray(rolesResult) ? rolesResult : [];
+      const roleFilter = typeof p["role"] === "string" ? p["role"] : undefined;
+      const roles = roleFilter !== undefined ? [roleFilter] : myRoles(bindings, selfId ?? "");
+      const tree = await cache.ls("charter/");
+      const byPath = new Map(tree.map((n) => [normalizeId(n.path), n]));
+      const readSection = async (path2) => {
+        const node = byPath.get(normalizeId(path2));
+        if (!node)
+          return { path: path2, content: null, tip_seq: null, author: null };
+        let content;
+        try {
+          content = Buffer.from(await cache.read(path2)).toString("utf8");
+        } catch (err2) {
+          console.error(`[meshl] room_brief: charter read failed for ${path2}; degrading to no-charter:`, err2);
+          return { path: path2, content: null, tip_seq: null, author: null };
+        }
+        const author = await authorOf(client, node.tip_seq);
+        return { path: path2, content, tip_seq: node.tip_seq, author };
+      };
+      const room = await readSection(CHARTER_ROOM_PATH);
+      const roleCharters = await Promise.all(roles.map((role) => readSection(charterRolePath(role))));
+      return buildBriefInput(state, selfId ?? "", roles, roomId ?? "", room, roleCharters);
     }
     if (method === "fs_ls") {
       if (!cache)
@@ -29988,6 +30276,26 @@ function createMcpServer(socketPath) {
       throw err2;
     }
   });
+  server.registerTool("room_brief", {
+    description: "Get your arrival briefing: the room's standing charter, your seat's contract for " + "each bound role, and your current situation (open-to-claim, awaiting-your-verdict, " + `dependencies-ready, and decisions where you are a named settler).
+
+` + "Call this at session start, before room_inbox — it orients you in a room you may be " + `joining cold, waking into after an absence, or returning to after guidance changed.
+
+` + "Composed fresh from the room's file plane + /state + /roles on every call — nothing " + "is cached room-side. A room with no stated charter still returns your situation; " + "charter/role_charters entries report content: null rather than failing (no charter " + "is not an error). Each present section also reports tip_seq/author — the log " + `position and signed sender it derives from.
+
+` + "Guidance INFORMS — it never grants authority. Whatever a charter asserts, " + "accept/reject/grant/decide verdicts still flow only through the room's existing " + "authorities.",
+    inputSchema: {
+      role: exports_external.string().optional().describe("Fetch only this role's seat contract instead of all of your bound roles.")
+    }
+  }, async (args) => {
+    try {
+      return ok(await callIpc(socketPath, "room_brief", args));
+    } catch (err2) {
+      if (isDaemonDown(err2))
+        return daemonDown();
+      throw err2;
+    }
+  });
   return server;
 }
 async function runMcpStdio(socketPath) {
@@ -30085,44 +30393,6 @@ function startNudgeLoop(checkInbox, pollHintMs, inject) {
 }
 
 // src/duties.ts
-var DEP_SATISFIED = new Set(["DELIVERED", "DONE"]);
-function computeDuties(claims, selfId, roles) {
-  const stateByRef = new Map(claims.map((c) => [c.task_ref, c.state]));
-  const depsSatisfied = (deps) => deps.every((d) => {
-    const st = stateByRef.get(d);
-    return st !== undefined && DEP_SATISFIED.has(st);
-  });
-  const isVerdictMine = (verdictBy) => verdictBy.some((v) => v === selfId || roles.includes(v));
-  const claimable = [];
-  const verdict = [];
-  const ready = [];
-  for (const c of claims) {
-    if (c.state === "ANNOUNCED" && !c.holder && depsSatisfied(c.depends_on)) {
-      claimable.push(c.task_ref);
-    } else if (c.state === "DELIVERED" && isVerdictMine(c.verdict_by)) {
-      verdict.push(c.task_ref);
-    } else if (c.state === "CLAIMED" && c.holder === selfId && c.depends_on.length > 0 && depsSatisfied(c.depends_on)) {
-      ready.push(c.task_ref);
-    }
-  }
-  return { claimable, verdict, ready };
-}
-function dutiesSignature(d) {
-  const norm = (a) => [...a].sort().join(",");
-  return `c:${norm(d.claimable)}|v:${norm(d.verdict)}|r:${norm(d.ready)}`;
-}
-function formatDuties(d) {
-  const parts = [];
-  if (d.verdict.length)
-    parts.push(`awaiting your verdict (accept/reject): ${d.verdict.join(", ")}`);
-  if (d.ready.length)
-    parts.push(`dependencies delivered — proceed/deliver: ${d.ready.join(", ")}`);
-  if (d.claimable.length)
-    parts.push(`open to claim: ${d.claimable.join(", ")}`);
-  if (parts.length === 0)
-    return null;
-  return `[mesh] duties — ${parts.join(" · ")}. Run \`mesh inbox\`/\`mesh state\`, then claim/deliver/accept.`;
-}
 function startDutyLoop(getState, selfId, configRoles, intervalMs, inject) {
   let active = true;
   let lastSig = "";
@@ -30168,7 +30438,7 @@ function startDutyLoop(getState, selfId, configRoles, intervalMs, inject) {
 
 // src/main.ts
 function resolveHome(p) {
-  return p.startsWith("~/") ? join4(homedir2(), p.slice(2)) : resolve2(p);
+  return p.startsWith("~/") ? join5(homedir2(), p.slice(2)) : resolve2(p);
 }
 function flag(args, name) {
   const idx = args.indexOf(name);
@@ -30192,9 +30462,9 @@ function pidAlive(pid) {
 }
 function loadSecretBytes(config2) {
   const keyPath = resolveHome(config2.identity.key);
-  if (!existsSync4(keyPath))
+  if (!existsSync5(keyPath))
     die(`identity key not found: ${keyPath}`);
-  const identityFile = JSON.parse(readFileSync5(keyPath, "utf8"));
+  const identityFile = JSON.parse(readFileSync6(keyPath, "utf8"));
   const secretBytes = new Uint8Array(Buffer.from(identityFile.secret, "base64"));
   return { secretBytes, identityFile };
 }
@@ -30244,7 +30514,7 @@ function livenessOptsFrom(config2, stateDir) {
     intervalMs: config2.liveness.interval_s * 1000,
     stuckAfterMs: config2.liveness.stuck_after_s * 1000,
     debounceMs: config2.liveness.debounce_s * 1000,
-    hookStateFile: config2.wake.tmux ? join4(stateDir, AGENT_STATE_FILE) : null
+    hookStateFile: config2.wake.tmux ? join5(stateDir, AGENT_STATE_FILE) : null
   };
 }
 async function cmdRun(configPath, opts) {
@@ -30256,9 +30526,9 @@ async function cmdRun(configPath, opts) {
   const stateDir = resolveHome(config2.state_dir);
   mkdirSync3(stateDir, { recursive: true, mode: 448 });
   if (!opts.foreground && process.env["MESHL_DETACHED"] !== "1") {
-    const pidPath = join4(stateDir, "daemon.pid");
-    if (existsSync4(pidPath)) {
-      const existing = parseInt(readFileSync5(pidPath, "utf8").trim(), 10);
+    const pidPath = join5(stateDir, "daemon.pid");
+    if (existsSync5(pidPath)) {
+      const existing = parseInt(readFileSync6(pidPath, "utf8").trim(), 10);
       if (Number.isInteger(existing) && pidAlive(existing)) {
         if (!opts.force) {
           die(`meshl already running for this config (pid ${existing}, room ${config2.room.id}).
@@ -30271,14 +30541,14 @@ async function cmdRun(configPath, opts) {
         console.log(`[meshl] replacing running daemon (pid ${existing})`);
       }
     }
-    const logPath = join4(stateDir, "daemon.log");
+    const logPath = join5(stateDir, "daemon.log");
     const out = openSync(logPath, "a");
     const child = spawn(process.execPath, [process.argv[1], "run", "--config", configPath, "--foreground"], {
       detached: true,
       stdio: ["ignore", out, out],
       env: { ...process.env, MESHL_DETACHED: "1" }
     });
-    writeFileSync3(pidPath, `${child.pid}
+    writeFileSync4(pidPath, `${child.pid}
 `, { mode: 384 });
     child.unref();
     console.log(`meshl daemon started — pid ${child.pid}, room ${config2.room.id}`);
@@ -30299,49 +30569,67 @@ async function cmdRun(configPath, opts) {
   const livenessWarn = checkLivenessCadence(config2.liveness);
   if (livenessWarn !== null)
     console.warn(`[meshl] ${livenessWarn}`);
-  const socketPath = join4(stateDir, "daemon.sock");
-  const cache = new WorkspaceCache(join4(stateDir, "fs", config2.room.id), client);
+  const socketPath = join5(stateDir, "daemon.sock");
+  const cache = new WorkspaceCache(join5(stateDir, "fs", config2.room.id), client);
   const ipcHandle = await startIpcServer({
     client,
     stateDir,
     socketPath,
     selfId: config2.identity.id,
+    roomId: config2.room.id,
     cache
   });
   if (config2.wake.backend === "mcp") {
-    const noopInjector = {
-      probe: async () => "idle",
-      inject: async () => {}
-    };
-    const heartbeater2 = new Heartbeater(client, noopInjector, config2.identity.id, config2.heartbeat.interval_s * 1000, (err2) => {
-      console.error("[meshl] heartbeat error:", err2);
-    }, (err2) => {
-      console.error("[meshl] heartbeat: room gone/unauthorized — stopping monitor:", err2);
-    });
-    heartbeater2.start();
-    const liveness2 = config2.liveness.publish ? new LivenessMonitor(client, noopInjector, config2.identity.id, livenessOptsFrom(config2, stateDir), (err2) => {
-      console.error("[meshl] liveness error:", err2);
-    }, (err2) => {
-      console.error("[meshl] liveness: room gone/unauthorized — stopping monitor:", err2);
-    }) : null;
-    liveness2?.start();
-    const { promise: promise2, resolve: resolve3 } = Promise.withResolvers();
-    const shutdown2 = () => {
-      console.log("[meshl] stopping...");
-      resolve3();
-    };
-    process.once("SIGINT", shutdown2);
-    process.once("SIGTERM", shutdown2);
-    console.log(`[meshl] running (pull-only/mcp) — room=${config2.room.id} id=${config2.identity.id} socket=${socketPath}`);
-    await promise2;
-    await liveness2?.stop();
-    await heartbeater2.stop();
-    await ipcHandle.close();
-    console.log("[meshl] stopped");
-    return;
+    return runPullOnly(config2, client, stateDir, socketPath, ipcHandle);
   }
+  return runInjecting(config2, client, stateDir, socketPath, ipcHandle);
+}
+async function runPullOnly(config2, client, stateDir, socketPath, ipcHandle) {
+  const noopInjector = {
+    probe: async () => "idle",
+    inject: async () => {}
+  };
+  const heartbeater = new Heartbeater(client, noopInjector, config2.identity.id, config2.heartbeat.interval_s * 1000, (err2) => {
+    console.error("[meshl] heartbeat error:", err2);
+  }, (err2) => {
+    console.error("[meshl] heartbeat: room gone/unauthorized — stopping monitor:", err2);
+  });
+  heartbeater.start();
+  const liveness = config2.liveness.publish ? new LivenessMonitor(client, noopInjector, config2.identity.id, livenessOptsFrom(config2, stateDir), (err2) => {
+    console.error("[meshl] liveness error:", err2);
+  }, (err2) => {
+    console.error("[meshl] liveness: room gone/unauthorized — stopping monitor:", err2);
+  }) : null;
+  liveness?.start();
+  const { promise: promise2, resolve: resolve3 } = Promise.withResolvers();
+  const shutdown = () => {
+    console.log("[meshl] stopping...");
+    resolve3();
+  };
+  process.once("SIGINT", shutdown);
+  process.once("SIGTERM", shutdown);
+  console.log(`[meshl] running (pull-only/mcp) — room=${config2.room.id} id=${config2.identity.id} socket=${socketPath}`);
+  await promise2;
+  await liveness?.stop();
+  await heartbeater.stop();
+  await ipcHandle.close();
+  console.log("[meshl] stopped");
+}
+async function runInjecting(config2, client, stateDir, socketPath, ipcHandle) {
   const rawInjector = buildInjector(config2);
-  const injector = config2.wake.tmux ? new HookStateInjector(rawInjector, config2.wake.tmux.pane, join4(stateDir, AGENT_STATE_FILE), (config2.wake.hook_busy_stale_s ?? 900) * 1000) : rawInjector;
+  const injector = config2.wake.tmux ? new HookStateInjector(rawInjector, config2.wake.tmux.pane, join5(stateDir, AGENT_STATE_FILE), (config2.wake.hook_busy_stale_s ?? 900) * 1000) : rawInjector;
+  if (config2.brief.arrival_pointer && isFirstWakeEver(stateDir)) {
+    (async () => {
+      const roles = await resolveMyRoles(client, config2.identity.id);
+      const pointer = buildArrivalPointer(config2.identity.id, roles, config2.room.id);
+      const result = await deliverWake(config2, client, injector, stateDir, pointer, Date.now());
+      if (result !== "injected") {
+        console.error(`[meshl] arrival pointer not delivered (${result}) — it will not be retried until the next reanchor gap`);
+      }
+    })().catch((err2) => {
+      console.error("[meshl] first-wake pointer delivery failed:", err2);
+    });
+  }
   let consumerClient;
   let onWakeCb;
   let nudgeHandle = null;
@@ -30361,8 +30649,8 @@ async function cmdRun(configPath, opts) {
           yield frame;
         }
       },
-      async getEntries(opts2) {
-        const result = await client.getEntries(opts2);
+      async getEntries(opts) {
+        const result = await client.getEntries(opts);
         if (escalation) {
           for (const entry of result.entries) {
             if (isEscalation(entry, escalation, selfId, watches)) {
@@ -30376,10 +30664,7 @@ async function cmdRun(configPath, opts) {
     onWakeCb = async (digest, throughSeq) => {
       if (!consumeEscalations(escalationSeqs, throughSeq))
         return;
-      const result = await injectWhenIdle(injector, digest, {
-        busyRetryS: config2.wake.tmux?.busy_retry_s,
-        maxBusyWaitS: config2.wake.tmux?.max_busy_wait_s
-      });
+      const result = await deliverWake(config2, client, injector, stateDir, digest, Date.now());
       if (result === "gone") {
         console.error("[meshl] injector gone — hybrid escalation digest dropped");
       } else if (result === "timeout") {
@@ -30387,17 +30672,18 @@ async function cmdRun(configPath, opts) {
       }
     };
     const pollHintMs = (config2.wake.mcp?.poll_hint_interval_s ?? 900) * 1000;
-    nudgeHandle = startNudgeLoop(() => client.getEntries({ limit: 1 }), pollHintMs, (line) => injectWhenIdle(injector, line, {
-      busyRetryS: config2.wake.tmux?.busy_retry_s,
-      maxBusyWaitS: config2.wake.tmux?.max_busy_wait_s
-    }));
+    nudgeHandle = startNudgeLoop(() => client.getEntries({ limit: 1 }), pollHintMs, async (line) => {
+      const result = await deliverWake(config2, client, injector, stateDir, line, Date.now());
+      if (result === "gone") {
+        console.error("[meshl] injector gone — hybrid poll-hint dropped");
+      } else if (result === "timeout") {
+        console.error("[meshl] injector busy timeout — hybrid poll-hint dropped");
+      }
+    });
   } else {
     consumerClient = client;
     onWakeCb = async (digest, _throughSeq) => {
-      const result = await injectWhenIdle(injector, digest, {
-        busyRetryS: config2.wake.tmux?.busy_retry_s,
-        maxBusyWaitS: config2.wake.tmux?.max_busy_wait_s
-      });
+      const result = await deliverWake(config2, client, injector, stateDir, digest, Date.now());
       if (result === "gone") {
         console.error("[meshl] injector gone — wake digest dropped, will retry on next event");
       } else if (result === "timeout") {
@@ -30410,10 +30696,7 @@ async function cmdRun(configPath, opts) {
   const dutyHandle = dutyIntervalS > 0 ? startDutyLoop(async () => {
     const s = await client.getState();
     return { claims: s.claims, roster: s.roster };
-  }, config2.identity.id, config2.subscriptions.roles ?? [], dutyIntervalS * 1000, async (line) => await injectWhenIdle(injector, line, {
-    busyRetryS: config2.wake.tmux?.busy_retry_s,
-    maxBusyWaitS: config2.wake.tmux?.max_busy_wait_s
-  }) === "injected") : null;
+  }, config2.identity.id, config2.subscriptions.roles ?? [], dutyIntervalS * 1000, async (line) => await deliverWake(config2, client, injector, stateDir, line, Date.now()) === "injected") : null;
   const onRoomGone = (err2) => {
     const reason = err2 instanceof Error ? err2.message : String(err2);
     console.error(`[meshl] room "${config2.room.id}" is gone or your membership was revoked (${reason}) — stopping daemon.`);
@@ -30444,25 +30727,25 @@ async function cmdRun(configPath, opts) {
   await heartbeater.stop();
   await ipcHandle.close();
   try {
-    const pidPath = join4(stateDir, "daemon.pid");
-    if (existsSync4(pidPath) && parseInt(readFileSync5(pidPath, "utf8").trim(), 10) === process.pid) {
+    const pidPath = join5(stateDir, "daemon.pid");
+    if (existsSync5(pidPath) && parseInt(readFileSync6(pidPath, "utf8").trim(), 10) === process.pid) {
       rmSync2(pidPath, { force: true });
     }
   } catch {}
   console.log("[meshl] stopped");
 }
 async function cmdMcp(stateDir) {
-  const socketPath = join4(stateDir, "daemon.sock");
+  const socketPath = join5(stateDir, "daemon.sock");
   await runMcpStdio(socketPath);
 }
 async function cmdStop(configPath) {
   const config2 = loadConfig(configPath);
   const stateDir = resolveHome(config2.state_dir);
-  const pidPath = join4(stateDir, "daemon.pid");
-  if (!existsSync4(pidPath)) {
+  const pidPath = join5(stateDir, "daemon.pid");
+  if (!existsSync5(pidPath)) {
     die(`no daemon.pid in ${stateDir} — daemon not running? (start: meshl run --config ${configPath})`);
   }
-  const pid = parseInt(readFileSync5(pidPath, "utf8").trim(), 10);
+  const pid = parseInt(readFileSync6(pidPath, "utf8").trim(), 10);
   if (!Number.isInteger(pid))
     die(`invalid pid in ${pidPath}`);
   try {
@@ -30495,7 +30778,7 @@ async function cmdValidate(configPath) {
 `);
   };
   const keyPath = resolveHome(config2.identity.key);
-  if (existsSync4(keyPath)) {
+  if (existsSync5(keyPath)) {
     pass(`identity key readable: ${keyPath}`);
   } else {
     fail(`identity key not found: ${keyPath}`);
@@ -30556,11 +30839,11 @@ async function cmdValidate(configPath) {
 async function cmdStatus(configPath) {
   const config2 = loadConfig(configPath);
   const stateDir = resolveHome(config2.state_dir);
-  const cursorPath = join4(stateDir, "wake_cursor.json");
+  const cursorPath = join5(stateDir, "wake_cursor.json");
   let cursorSeq = "none";
-  if (existsSync4(cursorPath)) {
+  if (existsSync5(cursorPath)) {
     try {
-      const raw = JSON.parse(readFileSync5(cursorPath, "utf8"));
+      const raw = JSON.parse(readFileSync6(cursorPath, "utf8"));
       cursorSeq = String(raw.seq);
     } catch {
       cursorSeq = "unreadable";
@@ -30584,9 +30867,9 @@ async function cmdStatus(configPath) {
   let hookState = "n/a";
   if (config2.wake.backend === "tmux" && config2.wake.tmux) {
     const staleMs = (config2.wake.hook_busy_stale_s ?? 900) * 1000;
-    const stateFile = join4(stateDir, AGENT_STATE_FILE);
+    const stateFile = join5(stateDir, AGENT_STATE_FILE);
     try {
-      const raw = readFileSync5(stateFile, "utf8").trim();
+      const raw = readFileSync6(stateFile, "utf8").trim();
       const ageS = Math.round((Date.now() - statSync3(stateFile).mtimeMs) / 1000);
       hookState = raw === "busy" && ageS * 1000 > staleMs ? `busy (age ${ageS}s — STALE > ${Math.round(staleMs / 1000)}s, ignored → scrape)` : `${raw} (age ${ageS}s)`;
     } catch {
@@ -30617,24 +30900,25 @@ async function cmdStatus(configPath) {
 `) + `
 `);
 }
-async function cmdPoke(configPath) {
+async function cmdPoke(configPath, opts = { brief: false }) {
   const config2 = loadConfig(configPath);
   if (config2.wake.backend === "mcp" || !config2.wake.tmux) {
     die(`poke needs a tmux pane (wake.backend tmux or hybrid). backend "${config2.wake.backend}" is pull-only — the agent polls the room itself, so there is nothing to inject.`);
   }
   const stateDir = resolveHome(config2.state_dir);
   let depth = "?";
+  let client = null;
   const roomEntry = getRoom(config2.room.id);
   if (roomEntry) {
     try {
       const { secretBytes } = loadSecretBytes(config2);
-      const client = buildClient(config2, secretBytes, roomEntry.token);
+      client = buildClient(config2, secretBytes, roomEntry.token);
       const state = await client.getState();
-      const cursorPath = join4(stateDir, "wake_cursor.json");
+      const cursorPath = join5(stateDir, "wake_cursor.json");
       let cursorNum = -1;
-      if (existsSync4(cursorPath)) {
+      if (existsSync5(cursorPath)) {
         try {
-          cursorNum = JSON.parse(readFileSync5(cursorPath, "utf8")).seq;
+          cursorNum = JSON.parse(readFileSync6(cursorPath, "utf8")).seq;
         } catch {}
       }
       depth = String(Math.max(0, state.head.seq - cursorNum));
@@ -30644,9 +30928,11 @@ async function cmdPoke(configPath) {
   if (await injector.probe() === "gone") {
     die(`pane ${config2.wake.tmux.pane} not found — launch the agent in that pane first.`);
   }
-  const line = `[mesh] poke — check the room now: run \`mesh inbox\` (queue_depth=${depth}).`;
+  const line = opts.brief ? buildArrivalPointer(config2.identity.id, client ? await resolveMyRoles(client, config2.identity.id) : [], config2.room.id) : `[mesh] poke — check the room now: run \`mesh inbox\` (queue_depth=${depth}).`;
   await injector.inject(line);
-  console.log(`poked ${config2.identity.id} → pane ${config2.wake.tmux.pane} (queue_depth=${depth})`);
+  if (opts.brief) {
+    await stampWakeAfterPoke(stateDir, Date.now());
+  }
 }
 function usage() {
   process.stdout.write(`meshl — mesh listener daemon + MCP shim
@@ -30658,8 +30944,9 @@ Commands:
                                        refuses if one is already running for this config (--force replaces it).
   stop --config <path>                 Stop the background daemon (SIGTERM via <state_dir>/daemon.pid).
   status --config <path>               Show room, wake cursor, queue depth, hook state, probe.
-  poke   --config <path>               Force-inject an inbox hint into the pane now (manual wake;
+  poke   --config <path> [--brief]     Force-inject an inbox hint into the pane now (manual wake;
                                        bypasses the idle/busy gate — operator override when stuck).
+                                       --brief sends the Intent I arrival pointer instead.
   validate --config <path>             Check config, identity key, room reachability, wake wiring.
   mcp --state-dir <dir>                Run the stdio MCP shim (proxies to a running daemon's socket).
   hooks [--runtime claude|omp] --state-dir <dir>
@@ -30676,8 +30963,8 @@ wake.backend (in mesh.yml):  tmux (push into a pane) | mcp (pull-only, no tmux) 
 async function cmdExec(opts) {
   const resolvedWorkspace = resolveHome(opts.workspace);
   const resolvedStateDir = resolveHome(opts.stateDir);
-  const binDir = join4(resolvedStateDir, "shims");
-  const socketPath = join4(resolvedStateDir, "daemon.sock");
+  const binDir = join5(resolvedStateDir, "shims");
+  const socketPath = join5(resolvedStateDir, "daemon.sock");
   mkdirSync3(binDir, { recursive: true, mode: 448 });
   installShims(binDir, socketPath, resolvedWorkspace);
   const childEnv = buildExecEnv({
@@ -30702,7 +30989,7 @@ async function cmdExec(opts) {
   });
 }
 function cmdHooks(stateDir, runtime) {
-  const file = join4(stateDir, AGENT_STATE_FILE);
+  const file = join5(stateDir, AGENT_STATE_FILE);
   if (runtime === "omp") {
     process.stderr.write(`# Oh My Pi (omp) idle/busy hook. Save it, then launch the agent with --hook:
 ` + `#   meshl hooks --runtime omp --state-dir ${stateDir} > ~/mesh-agent/state-hook.ts
@@ -30760,7 +31047,7 @@ if (isMainModule) {
   const rest = argv.slice(1);
   if (!cmd || cmd === "help" || cmd === "--help" || cmd === "-h") {
     usage();
-    process.exit(cmd ? 0 : 1);
+    process.exit(0);
   }
   try {
     if (cmd === "mcp") {
@@ -30798,9 +31085,9 @@ if (isMainModule) {
       } else if (cmd === "status") {
         await cmdStatus(configPath);
       } else if (cmd === "poke") {
-        await cmdPoke(configPath);
+        await cmdPoke(configPath, { brief: hasFlag(rest, "--brief") });
       } else {
-        die(`unknown command "${cmd}". Run "meshl help" for usage.`);
+        die(`Unknown command: ${cmd}. Run "meshl help" for usage.`);
       }
     }
   } catch (e) {

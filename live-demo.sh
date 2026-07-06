@@ -102,6 +102,71 @@ INVITE="$($MESH create-room "$ROOM_ID" --owner harry@hcproduct --url "$ROOM_URL"
 $MESH join "$ROOM_URL/v1/rooms/$ROOM_ID" "$INVITE" >/dev/null
 echo "Owner harry@hcproduct created room $ROOM_ID"
 
+# ── seed the room charter (Intent I: situated arrival guidance) ────────────────
+CHARTER_DIR="$LIVE/charter"
+mkdir -p "$CHARTER_DIR/roles"
+cat > "$CHARTER_DIR/room.md" <<'EOF'
+# homepage-demo — room charter
+
+A human brings work in plain language; the router turns it into a concrete, claimable task;
+whichever capable agent is listening claims and delivers it; the human who asked for it rules
+on the result.
+
+## Wake signal
+
+A listener daemon watches the room on your behalf. Every `[mesh]` line injected into your
+session — including the `[mesh] briefing — …` arrival pointer — is a wake signal. On every
+wake, your FIRST action is:
+
+    mesh inbox --mark
+
+Fetch this room charter plus your bound seat's contract plus your current situation in one
+call:
+
+    mesh brief
+
+## Task lifecycle
+
+Tasks move `ANNOUNCED → CLAIMED → DELIVERED → DONE` (or back to `ANNOUNCED` on `reject`).
+Only the task's named verdict authority — normally the human who requested it — may
+`accept`/`reject` a delivery.
+EOF
+cat > "$CHARTER_DIR/roles/router.md" <<'EOF'
+# router — seat contract
+
+You turn a human's plain-language `request` into ONE concrete, claimable task and stop — you
+do not build it yourself. Give it a short kebab-case task ref, state exactly what to build in
+the body, and make the requester the verdict holder (`--verdict-by <their id>`). Before
+announcing, check `mesh state`/inbox — never announce the same request twice.
+
+## Hard constraints
+
+- ONLY `announce`. NEVER `claim`, `deliver`, `accept`, or `reject`.
+- Do not implement the work yourself. You route; others build.
+- After acting on a wake, stop. Do not poll, loop, or invent work.
+EOF
+cat > "$CHARTER_DIR/roles/frontend.md" <<'EOF'
+# frontend — seat contract
+
+For each task still `ANNOUNCED` whose work is a page/UI or wiring a page to an API, claim it
+immediately — first valid claim wins (CAS); a `claim_conflict` means another agent won the
+race, not an error. Hold one claim at a time; server/API-implementation tasks are not yours.
+
+Build real, self-contained output (no placeholders), then `mesh deliver <task_ref> --dir .
+--body "…"` — a delivery with no directory/artifact is rejected by the room. On `reject`,
+read why (`mesh inbox`), fix, and re-deliver.
+
+## Hard constraints
+
+- NEVER `announce` tasks — announcements come from the router/human.
+- NEVER `accept` or `reject` — you are not a verdict holder; the room will reject it.
+- After acting on a wake, stop. Do not poll, loop, or invent work.
+EOF
+MESH_HOME="$LIVE/harry" $MESH fs put "$CHARTER_DIR/room.md" --as charter/room.md >/dev/null
+MESH_HOME="$LIVE/harry" $MESH fs put "$CHARTER_DIR/roles/router.md" --as charter/roles/router.md >/dev/null
+MESH_HOME="$LIVE/harry" $MESH fs put "$CHARTER_DIR/roles/frontend.md" --as charter/roles/frontend.md >/dev/null
+echo "Room charter seeded: charter/room.md, charter/roles/{router,frontend}.md"
+
 # Locate an agent operating-contract markdown: repo examples in repo mode, else the
 # copy that ships alongside this script in the published demo bundle.
 find_contract() {
@@ -124,6 +189,13 @@ setup_agent() {
 
   MESH_HOME="$home" $MESH keygen --id "$id" >/dev/null
   MESH_HOME="$home" $MESH join "$ROOM_URL/v1/rooms/$ROOM_ID" "$INVITE" >/dev/null
+
+  # Intent G role bind, named after the part of $id after '@' ("router"/"frontend" — this
+  # demo's ids are <name>@<domain>, not <seat>@<team>), so charter/roles/<seat>.md (seeded
+  # above) is reachable via `mesh brief` — binding-sourced role resolution reads GET
+  # /roles, never roster.roles, so without this bind the seeded charter is unreachable.
+  local role="${id#*@}"
+  MESH_HOME="$LIVE/harry" $MESH fs role "$id" "$role" >/dev/null
 
   mkdir -p "$work"
   local contract_src; contract_src="$(find_contract "$contract")" || { echo "agent prompt '$contract' not found" >&2; exit 1; }

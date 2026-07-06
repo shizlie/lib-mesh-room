@@ -18,32 +18,13 @@ something relevant happens. On every `[mesh]` wake, your FIRST action is:
 mesh inbox --mark
 ```
 
-**Reading a line.** Each inbox line looks like:
-`[0001] 06:09:49  harry@hcproduct  REQUEST  "I need a homepage"`.
-The leading `[0001]` is the room **sequence number** — never use it as a task ref. Task
-refs are the short token right after the performative on `announce`/`claim`/`deliver` lines.
+Then run `mesh brief` — it shows this room's charter, your seat's contract (when and how to
+announce a task, and how to avoid a duplicate announcement), and your current situation in
+one call.
 
-## What to do, and when
-
-1. **A human `request` describing work.** When `mesh inbox` shows a `request` whose body
-   asks for something to be built ("I need a homepage", "build us a landing page", "we
-   need a pricing page"):
-   1. Decide the concrete deliverable and give it a short kebab-case task ref
-      (`homepage`, `landing-page`, `pricing-page`).
-   2. Announce it with a body that states exactly what to build and which skill it needs,
-      so a listening agent knows whether it is theirs. Make the human who asked the
-      **verdict holder** (`--verdict-by <their id>`, the `sender` of the request line) —
-      they decide whether the delivered work ships. So for a request from
-      `harry@hcproduct`:
-      ```
-      mesh announce <task_ref> --body "<deliverable>. Frontend task." --verdict-by harry@hcproduct
-      ```
-   3. That is your whole job for this request. Stop. A capable agent will claim and
-      deliver it on its own; you will see those transitions in later wakes but you take
-      no action on them.
-
-2. **Avoid duplicate announcements.** Before announcing, check the inbox / `mesh state`.
-   If the task is already `ANNOUNCED`, `CLAIMED`, `DELIVERED`, or `DONE`, do nothing.
+```
+mesh announce <task_ref> --body "<deliverable>. <skill> task." --verdict-by <requester-id>
+```
 
 ## Hard constraints
 

@@ -113,6 +113,78 @@ echo "Seeding shared workspace from $FIXTURE ..."
 echo "Shared workspace seeded:"
 MESH_HOME="$OWNER_HOME" $MESH fs ls | sed 's/^/  /'
 
+# ── seed the room charter (Intent I: situated arrival guidance) ────────────────
+CHARTER_DIR="$LIVE/charter"
+mkdir -p "$CHARTER_DIR/roles"
+cat > "$CHARTER_DIR/room.md" <<'EOF'
+# todo-demo — room charter
+
+This room coordinates a shared-workspace bug fix. The code under repair — a deliberately
+buggy TODO backend — lives in the room's file plane (`mesh fs ls`/`get`/`grep`/`put`), not in
+any one participant's local checkout: the moment one participant `fs put`s a file, every
+other participant's `fs get`/`fs grep` sees the new bytes.
+
+## Wake signal
+
+A listener daemon watches the room on your behalf. Every `[mesh]` line injected into your
+session — including the `[mesh] briefing — …` arrival pointer — is a wake signal. On every
+wake, your FIRST action is:
+
+    mesh inbox --mark
+
+Read what changed, then act on it per your own seat's contract. Fetch this room charter plus
+your bound seat's contract plus your current situation in one call:
+
+    mesh brief
+
+## Task lifecycle
+
+Tasks move `ANNOUNCED → CLAIMED → DELIVERED → DONE` (or back to `ANNOUNCED` on `reject`).
+The owner announces; a claimable task's fix belongs to whichever seat's contract says so;
+only the task's named verdict authority may `accept`/`reject` a delivery.
+EOF
+cat > "$CHARTER_DIR/roles/fixer.md" <<'EOF'
+# fixer — seat contract
+
+Your job is implementation, not verdicts. For each task still `ANNOUNCED` whose fix is a
+code change (not page/UI work), claim it immediately — first valid claim wins (CAS); a
+`claim_conflict` means another agent won the race, not an error. Hold one claim at a time.
+
+Work entirely in the shared workspace: `mesh fs grep`/`fs get` to locate and read, `mesh fs
+put` to write your fix back, then `mesh deliver <task_ref> --dir . --body "…"` once the
+project's checks are green. If a reviewer rejects, read why (`mesh inbox`), fix again in the
+shared workspace, and re-`deliver`.
+
+## Hard constraints
+
+- NEVER `announce` tasks — announcements come from the coordinator/owner.
+- NEVER `accept` or `reject` — you are not a verdict holder; the room will reject it.
+- After acting on a wake, stop. Do not poll, loop, or invent work.
+EOF
+cat > "$CHARTER_DIR/roles/reviewer.md" <<'EOF'
+# reviewer — seat contract
+
+Your job is verdicts, not implementation. You `accept` or `reject` deliveries on the tasks
+you are the named verdict authority for; you do not claim or build anything.
+
+For each task that is `DELIVERED` and lists you as the verdict authority: inspect the change
+live in the shared workspace (`mesh fs grep`/`fs get` — never a tarball hand-off), run the
+project's checks, then `accept` with a concrete reason or `reject` with a specific, actionable
+one. A reject returns the task to `ANNOUNCED` for re-claiming and re-delivery — that is a
+valid outcome, not a failure.
+
+## Hard constraints
+
+- NEVER `claim`, build, or `deliver` — implementation belongs to the worker seats.
+- NEVER `announce` tasks — announcements come from the coordinator/owner.
+- Always include a non-empty `--body` on every `accept` and `reject`.
+- After acting on a wake, stop. Do not poll, loop, or invent work.
+EOF
+MESH_HOME="$OWNER_HOME" $MESH fs put "$CHARTER_DIR/room.md" --as charter/room.md >/dev/null
+MESH_HOME="$OWNER_HOME" $MESH fs put "$CHARTER_DIR/roles/fixer.md" --as charter/roles/fixer.md >/dev/null
+MESH_HOME="$OWNER_HOME" $MESH fs put "$CHARTER_DIR/roles/reviewer.md" --as charter/roles/reviewer.md >/dev/null
+echo "Room charter seeded: charter/room.md, charter/roles/{fixer,reviewer}.md"
+
 # ── teammate setup ────────────────────────────────────────────────────────────────
 # setup_teammate <id> <skill> <contract.md> <subscribe-perf> <pane>
 setup_teammate() {
@@ -122,6 +194,12 @@ setup_teammate() {
   local work="$LIVE/$name-work"
   MESH_HOME="$home" $MESH keygen --id "$id" >/dev/null
   MESH_HOME="$home" $MESH join "$ROOM_URL/v1/rooms/$ROOM_ID" "$INVITE" >/dev/null
+
+  # Intent G role bind, named after the seat ("fixer"/"reviewer" — the part of $id before
+  # '@'), so charter/roles/<seat>.md (seeded above) is reachable via `mesh brief` — the
+  # binding-sourced role resolution (Tasks 2-4) reads GET /roles, never roster.roles, so
+  # without this bind the seeded charter would be unreachable regardless of its content.
+  MESH_HOME="$OWNER_HOME" $MESH fs role "$id" "$name" >/dev/null
   mkdir -p "$work"
   local src=""
   for cand in "$ROOT/examples/agent-prompts/$contract" "$SCRIPT_DIR/$contract"; do
@@ -177,6 +255,11 @@ simulate() {
   MESH_HOME="$OWNER_HOME" $MESH announce fix-toggle --room "$ROOM_ID" \
     --body "toggle() never un-completes a todo; fix src/todos.ts" --verdict-by reviewer@build >/dev/null
   echo "[owner]    announced fix-toggle (verdict: reviewer@build)"
+
+  local brief_out; brief_out="$(MESH_HOME="$LIVE/fixer" $MESH brief)"
+  echo "$brief_out" | grep -q "todo-demo — room charter" || { echo "[fixer]    FAIL: mesh brief did not render the room charter"; return 1; }
+  echo "$brief_out" | grep -q "open to claim: fix-toggle" || { echo "[fixer]    FAIL: mesh brief did not render fix-toggle as claimable"; return 1; }
+  echo "[fixer]    mesh brief renders the room charter + >=1 claimable duty (fix-toggle)"
 
   MESH_HOME="$LIVE/fixer" $MESH inbox --mark >/dev/null 2>&1 || true
   MESH_HOME="$LIVE/fixer" $MESH claim fix-toggle >/dev/null
