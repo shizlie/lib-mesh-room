@@ -11,6 +11,188 @@
 
 Prior revisions: `mesh/CHANGELOG.md` maps spec revs to releases.
 
+## Foundations — the mental model (informative)
+
+> A **reading guide, not the contract.** It explains, from the ground up, *why* the
+> protocol is shaped the way it is and how the pieces fit — so §0–§13 read as detail on a
+> frame you already hold. Where this section and a numbered section ever seem to disagree,
+> **the numbered section is normative and wins.** Nothing here adds a rule.
+
+### 0.a One idea: the log is the whole system
+
+A room is **one append-only, hash-chained, signed log** (§1). That ordered sequence of
+entries is the single source of truth. Everything you can query — the task table, the file
+tree, role bindings, decisions, who is alive — is a **pure reduction of the log**,
+recomputable from genesis (seq 0). No side table is independently authoritative; each is a
+*view*.
+
+```mermaid
+flowchart LR
+  S["signed submission<br/>(a participant authors)"] -->|room validates + orders| E["entry<br/>seq · prev_hash · entry_hash"]
+  E --> L[("the log — SSOT<br/>append-only, hash-chained")]
+  L -->|pure reducers| V["views: /state · /tree · /roles · decisions"]
+```
+
+Internalize three properties; most of the spec falls out of them:
+
+- **Append-only.** No edit, no delete — a correction is a *new* entry (§1). The past is
+  evidence: because entry *n* commits to entry *n−1* by hash, anyone can verify who did what,
+  in what order, and detect tampering (§12.1).
+- **Order is `seq`, not the clock** (§0). One sequencer assigns `seq`; that single ordering
+  point is what makes concurrent actions resolve deterministically — two claims on one task,
+  two writes to one file, a rebind mid-decision (§4 CAS, §12.2).
+- **Signed by the author** (§0/§1). Authority is never "the charter says so" — it is "this
+  key was allowed to do this" (§12.16).
+
+### 0.b Why a log — and not a database, a bucket, or CRDT-everywhere
+
+- **Not a mutable database.** A row you `UPDATE` in place loses history and can't be verified
+  after the fact. The log keeps the *derivation*, so every table is reproducible and
+  auditable — the verifiable-records constraint (VISION).
+- **Not "just an S3 bucket with an API."** Content blobs *are* content-addressed (like object
+  storage), but that is only the file plane's **content layer**. Sitting on top is ordering,
+  3-way merge, CRDT, per-path ACL, and tamper-evident authorship — none of which a bucket
+  has. The bucket is a leaf; the log is the trunk.
+- **Not CRDT-for-everything.** CRDTs converge without a coordinator — perfect for prose, but
+  *silently wrong for code* (a character-merge can converge to a file that still parses yet
+  means the wrong thing — §12.6). So the file plane uses CRDT only for `shared` prose and a
+  git-style 3-way `merge` for code, chosen per path.
+
+### 0.c A "plane" is a family of entries + the view that reads them
+
+There is no separate service per feature. Each **plane** is just some performatives (§3) plus
+the reducer that projects them. All planes share the one log:
+
+```mermaid
+flowchart TB
+  L[("the log — one ordered signed chain")]
+  L --> C["Coordination — tasks<br/>announce·claim·deliver·accept (§3/§4)"]
+  L --> F["File — shared workspace<br/>file.* (§3) + tree/lease reducers"]
+  L --> R["Roles — durable seats<br/>system.role (§3, Intent G)"]
+  L --> D["Decisions — questions of record<br/>decide.* (§3, Intent H)"]
+  L --> I["Identity — key lifecycle<br/>key.rotate (§2, Intent A)"]
+  L --> Q["Liveness — is a holder alive<br/>signal (§3, Intent F)"]
+  L --> B["Briefing — arrival guidance<br/>room_brief (§11) reads the others (Intent I)"]
+```
+
+### 0.d Coordination plane (tasks) — the original core
+
+A unit of work is a `task_ref` with a state machine:
+`announce → ANNOUNCED → claim(CAS) → CLAIMED → deliver → DELIVERED → accept → DONE` (§4). The
+load-bearing subtleties:
+
+- **Claiming is compare-and-swap.** The first `claim` at the sequencer wins; the loser gets
+  `claim_conflict` and is *not* logged (§4). No lock, no negotiation.
+- **Only `deliver` transitions to DELIVERED**; `inform` is safe progress chatter that never
+  moves state (§3/§4) — an agent can narrate freely without accidentally completing work.
+- **Verdict authority** (`accept`/`reject`) is scoped by `verdict_by`, matched against roles
+  at verdict time (§4). Authority is checked, never assumed.
+- **Leases keep a claim alive** and auto-renew on any holder append; an idle holder heartbeats
+  off-log; a dead holder's lease expires and the room re-announces the task — failure
+  detection with no human in the loop (§5).
+
+### 0.e File plane — a shared folder that *is* a room
+
+The nuance that trips people up: the file plane is **two planes in one**, over **one
+canonical namespace**.
+
+**(1) Metadata vs content — replicated differently.**
+
+```mermaid
+flowchart LR
+  W["file.write (§3)"] --> T["metadata: path · size · tip_seq · content_hash<br/>ALWAYS replicated (cheap)"]
+  W --> H[("content: blobs keyed r2:sha256, deduped<br/>LAZY, content-addressed")]
+  Reader["another agent"] -->|sees list + meta instantly| T
+  Reader -->|fetch-on-access: fs get / room_fs_read| H
+```
+
+You always *see* that a file exists and changed (its `tip_seq`/`content_hash` move) for free;
+you fetch the **bytes** only on access. This is the Dropbox-like part — but writes are
+**explicit** (`file.write`), never an auto-uploading filesystem watcher.
+
+**(2) One flat canonical namespace — the source of truth, and the pollution risk.** Every
+`file.write` keys into *one* room tree by normalized path (§3, cross-OS `normalizeId`). Two
+agents with different local layouts land wherever their path says:
+
+```mermaid
+flowchart TB
+  A["agent A local: folder1/folder2/api.ts"] -->|--as src/api.ts| CT["room tree: src/api.ts — ONE node"]
+  B["agent B local: folder2.5/f3/api.ts"] -->|--as src/api.ts| CT
+  X["skip --as → two unrelated nodes:<br/>folder1/… AND folder2.5/… — tree polluted"]
+```
+
+There is **no per-agent namespace and no auto-reconciliation** — the mapping is deliberately
+dumb. Agents must agree on a canonical layout: the `--as` mapping is the reconciliation tool,
+the charter is the soft convention. This is the SSOT working exactly as designed — *and* its
+sharp edge: nothing enforces a schema, so undisciplined writers pollute the tree.
+
+**(3) Write policy is per-path, not global** (§3 `file.*`; policy in `@mesh/proto`):
+
+- **code** (`.ts .go .rs …`) → `merge`: a `file.write` carries `base_hash`; the room
+  CAS-checks it against the tip; clean edits fast-forward, a moved tip triggers a client-side
+  3-way `diff3`, overlaps land as git-style conflict markers — no lost update, no lock jam, no
+  silent corruption (§12.6).
+- **prose** (`.md .txt`) → `shared`: a live Yjs CRDT relayed through the room (the room orders
+  opaque update bytes, never parses the doc).
+- **opt-in** `exclusive`: `file.lock` serializes writers for files that must not merge.
+
+**(4) Access is one primitive: a signed path-capability** (§3 `system.grant`, §8 `/grants`). A
+grade lattice `discover < read < write < exclusive`; a room-global posture
+`default_access ∈ {open, closed}`; role- or id-scoped grants. Today `open` = members get full
+r+w, `closed` = deny-until-granted. (v1 honesty: `read` gates path *discovery*, not raw-blob
+confidentiality — see TODOS.)
+
+### 0.f Authority planes — roles, decisions, identity
+
+These exist so that *who may do what* is itself a verifiable log fact, not a config file:
+
+- **Roles (Intent G, `system.role`).** A room-signed `participant → role` binding with bench
+  depth, optional time-box, and override (§3). Crucially this is a **room primitive, not a
+  file-plane one** — the fs ACL reads it, but so do the decision plane and `room_brief`. A
+  *card* role is only a self-claimed label ("specialty") with no authority; a *binding*
+  confers it (§2/§12).
+- **Decisions (Intent H, `decide.request`/`decide.resolve`).** A question of record with an
+  ordered `authority` settler list; the first valid settler wins by CAS; a deadline lapse only
+  *announces* (`system.decision_lapse`), it never auto-executes a fallback (§3). Work need not
+  block on the answer — a dependent action may proceed `contingent_on` a pending decision (§1).
+- **Identity (Intent A, `key.rotate`).** A key rotates by revealing a pre-committed next
+  pubkey — proving the true holder acted, since only they ever held its secret — and
+  committing a fresh one; `tombstone` retires an id (§2). The reveal-vs-commitment check is the
+  *only* authority gate, no owner override.
+
+### 0.g Liveness & briefing — knowing the room's state
+
+- **Liveness (Intent F, `signal`).** `working`/`stuck`/`gone` transitions fold into the roster
+  (claim-gated), so the room can tell a slow holder from a dead one — never transitions a task,
+  never renews a lease (§3/§12.13).
+- **Briefing (Intent I, `room_brief`).** Not a new wire fact — a **read composition** over
+  `/state` + `/roles` + the well-known charter paths (§11/§13). It answers "I just arrived;
+  what is this room, what's my seat, what's on my plate?" The charter it surfaces is
+  **informative, never normative**: its text grants no authority (§12.16).
+
+### 0.h The whole picture
+
+```mermaid
+flowchart TB
+  P["participants (signed keys)"] -->|submissions| SEQ["sequencer: validate, order, append"]
+  SEQ --> L[("LOG — single source of truth")]
+  L --> RD["pure reducers"]
+  RD --> TASKS["task table"]
+  RD --> TREE["file tree + leases"]
+  RD --> ROLES["role bindings"]
+  RD --> DEC["decisions"]
+  RD --> ROST["roster + liveness"]
+  TASKS --> READS["/state · /tree · /roles · room_brief"]
+  TREE --> READS
+  ROLES --> READS
+  DEC --> READS
+  ROST --> READS
+  READS --> P
+```
+
+One log in, many views out, every view a pure function of the log. That single sentence is the
+protocol; §0–§13 are its precise statement.
+
 ## 0. Notation & primitives
 
 - Encoding: JSON, UTF-8. Canonical form for hashing/signing: **JCS (RFC 8785)** via a conformant library (not hand-rolled — D6), gated by the official RFC 8785 test vectors.
