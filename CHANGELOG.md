@@ -3,6 +3,42 @@
 All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.17.0] — 2026-07-11
+
+### Changed
+
+- **`fs put` streams progress by default — no flag.** During a push you get a live line
+  as each file moves: an in-place `⬆ n/N (p%) path` on a TTY, or throttled newline
+  progress lines (~1/s) when stderr is captured (an agent or CI), so a run always shows it
+  is alive. Previously piped/captured runs were silent until the end.
+- **`fs put` completion is one greppable line.** A push ends with `fs put done: <label> —
+  N files: X uploaded, Y unchanged[, conflicts, skipped, errors]  [exit N]` (or `fs put
+  stopped early: …` if it aborted), plus per-row lines only for outcomes that need a human
+  (conflicts/forks/errors/locked/refusals/behind). Routine rows fold into the summary;
+  `--verbose` lists every file. A 600-file push no longer scrolls a wall of routine rows.
+- **One bad file no longer sinks the batch.** By default a per-file failure (e.g. a file
+  over the room's artifact size limit → `413`) is skipped and recorded, and the push
+  continues; the summary counts each failure and the batch exits `2`.
+
+### Added
+
+- **`fs put --stop-on-error`** — abort at the first per-file error instead of skipping it.
+- **`fs put --verbose`** — print every file as its own row (the pre-summary behavior).
+- **Richer `--json` for agents.** A `file` event for a failed upload now carries its
+  `error`/`detail` (the reason, e.g. `artifact_too_large`); the `done` event carries an
+  `outcomes` per-kind tally and a `stopped` flag — so a `--json` consumer reads the whole
+  result, and tells "completed, some failed" from "aborted early", off one line.
+
+### Fixed
+
+- **Opaque `[unknown_error]` on `fs put`.** A non-JSON failure (a Cloudflare edge `413`
+  for an over-limit body, a 5xx HTML page, a gateway timeout) used to collapse into a bare
+  `[unknown_error]` with no detail. The client now surfaces the HTTP status plus a
+  control-byte-sanitized body snippet, with a size hint on `413`.
+- **A thrown network/disk error mid-push no longer crashes the whole batch** — it folds
+  into a per-file error row (skipped or stopped per policy), including failures inside the
+  stale-base self-heal and merged write-back paths.
+
 ## [1.16.0] — 2026-07-11
 
 ### Added

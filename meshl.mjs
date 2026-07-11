@@ -15900,15 +15900,23 @@ class MeshClient {
     });
   }
   async _err(res) {
+    const raw = await res.text().catch(() => "");
     let body = {};
     try {
-      body = await res.json();
+      if (raw)
+        body = JSON.parse(raw);
     } catch {}
+    const error = body["error"] ?? "unknown_error";
+    const statusText = `HTTP ${res.status}${res.statusText ? " " + res.statusText : ""}`;
+    const snippet = raw.replace(/[\u0000-\u001F\u007F]/g, " ").replace(/\s+/g, " ").trim().slice(0, 200);
+    const detail = body["detail"] ?? (error === "unknown_error" ? `${statusText}${snippet ? " — " + snippet : ""}` : res.statusText);
+    const structuredHint = body["hint"] ?? body["tip"];
+    const hint = structuredHint ?? (res.status === 413 ? "file may exceed the room's artifact size limit or the platform request-body limit" : undefined);
     return {
       ok: false,
-      error: body["error"] ?? "unknown_error",
-      detail: body["detail"] ?? res.statusText,
-      hint: body["hint"] ?? body["tip"],
+      error,
+      detail,
+      hint,
       retry_after_s: body["retry_after_s"],
       status: res.status
     };

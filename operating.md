@@ -175,20 +175,33 @@ A multi-file `put`/`get` is observable, not silent. Three renderers off the same
 stream (`mesh/packages/cli/src/progress.ts`):
 
 - **TTY (interactive):** a preflight plan line (files to move, new/changed/unchanged/
-  locked/skipped counts, an ETA for `put`), then a live in-place line —
-  `⬆ n/N (p%) path`, self-correcting "~Xs left" from *observed* per-file throughput
-  (which already folds in real rate-limit waits, unlike the static preflight estimate).
-  A rate-limit wait folds into the same line (`rate-limited, waited Ns`) instead of
-  printing anything new.
-- **Piped/CI (`plain`):** the preflight plan line, then at most one
-  `… rate-limited; throttling to the room's limit` notice for the whole run — no
-  per-file, per-wait spam.
+  locked/skipped counts, an ETA for `put`), then a live in-place line — `⬆ n/N (p%) path`,
+  self-correcting "~Xs left" from *observed* per-file throughput (which already folds in
+  real rate-limit waits, unlike the static preflight estimate). A rate-limit wait folds
+  into the same line (`rate-limited, waited Ns`) instead of printing anything new.
+- **Piped / agent-captured (`plain`):** the preflight plan line, then **throttled**
+  newline progress lines (`⬆ n/N (p%) path`, at most ~1/s) — a `\r` in-place rewrite is
+  meaningless off a TTY, so this keeps a captured run visibly alive without one line per
+  file — plus at most one `… rate-limited; throttling to the room's limit` notice. No flag
+  needed; streaming is the default in both cases.
 - **`--json`:** NDJSON to **stdout** (human lines go to stderr and are suppressed), one
   object per line:
   - `{"type":"plan","op":"put"|"get","label":..,"total":..,"upload":..,"new":..,"changed":..,"unchanged":..,"locked":..,"skipped":..,"eta_s":..}`
-  - `{"type":"file","n":..,"total":..,"path":..,"outcome":..}`
+  - `{"type":"file","n":..,"total":..,"path":..,"outcome":..}` — an `error` outcome also
+    carries `"error":..,"detail":..` (the failure reason, e.g. `artifact_too_large`)
   - `{"type":"ratelimit","waited_s":..}`
-  - `{"type":"done","op":..,"total":..,"act":..,"exit":..,"elapsed_s":..}`
+  - `{"type":"done","op":..,"total":..,"act":..,"exit":..,"elapsed_s":..,"outcomes":{<kind>:count,..}}` — `outcomes` is the per-outcome tally (e.g. `{"added":599,"error":1}`), so an agent reads the whole result off this one line
+
+**Completion output (`put`).** During the run it streams the live line above; on completion
+it prints ONE greppable terminal line — `fs put done: <label> — N files: X uploaded, Y
+unchanged[, merged, conflicts, locked, skipped, errors]  [exit N]`, or `fs put stopped
+early: …` if it aborted — plus per-row lines ONLY for outcomes that need a human
+(conflicts, forks, errors, locked, refusals, behind, resurrected). Routine
+uploaded/unchanged/merged rows fold into the summary; `--verbose` lists every file, or
+`mesh fs status` shows exactly which files changed vs. unchanged. **A per-file failure**
+(e.g. a file over the room's artifact limit → 413) is skipped and recorded, the batch
+continues, and the summary counts it (exit `2`); `--stop-on-error` aborts at the first
+failure instead.
 
 **Agent polling model.** There is no server-side job to poll — the `mesh fs put`/`fs get`
 **CLI process is the job**. An agent driving it directly reads the child's stdout; with

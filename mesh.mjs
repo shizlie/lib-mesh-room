@@ -1744,15 +1744,23 @@ class MeshClient {
     });
   }
   async _err(res) {
+    const raw = await res.text().catch(() => "");
     let body = {};
     try {
-      body = await res.json();
+      if (raw)
+        body = JSON.parse(raw);
     } catch {}
+    const error = body["error"] ?? "unknown_error";
+    const statusText = `HTTP ${res.status}${res.statusText ? " " + res.statusText : ""}`;
+    const snippet = raw.replace(/[\u0000-\u001F\u007F]/g, " ").replace(/\s+/g, " ").trim().slice(0, 200);
+    const detail = body["detail"] ?? (error === "unknown_error" ? `${statusText}${snippet ? " — " + snippet : ""}` : res.statusText);
+    const structuredHint = body["hint"] ?? body["tip"];
+    const hint = structuredHint ?? (res.status === 413 ? "file may exceed the room's artifact size limit or the platform request-body limit" : undefined);
     return {
       ok: false,
-      error: body["error"] ?? "unknown_error",
-      detail: body["detail"] ?? res.statusText,
-      hint: body["hint"] ?? body["tip"],
+      error,
+      detail,
+      hint,
       retry_after_s: body["retry_after_s"],
       status: res.status
     };
@@ -3011,6 +3019,7 @@ async function fsPutOcc(client, repopath, bytes, baseOverrideRef) {
 
 // src/progress.ts
 var CLEAR_LINE2 = "\x1B[2K\r";
+var PLAIN_THROTTLE_MS = 1000;
 function resolveMode(json, isTty) {
   if (json)
     return "json";
@@ -3063,6 +3072,8 @@ function createReporter(opts) {
   let rateNoticeShown = false;
   let startMs = 0;
   let doneCount = 0;
+  let lastPlainMs = 0;
+  const tally = {};
   function liveEtaStr() {
     if (doneCount < 1 || startMs === 0)
       return "";
@@ -3125,14 +3136,26 @@ function createReporter(opts) {
         curTotal = e.total;
         curPath = e.path;
         doneCount++;
+        tally[e.outcome.kind] = (tally[e.outcome.kind] ?? 0) + 1;
         if (mode === "json") {
-          jsonOut(JSON.stringify({ type: "file", n: e.n, total: e.total, path: e.path, outcome: e.outcome.kind }) + `
+          const extra = e.outcome.kind === "error" ? { error: e.outcome.error, ...e.outcome.detail !== undefined && { detail: e.outcome.detail } } : {};
+          jsonOut(JSON.stringify({ type: "file", n: e.n, total: e.total, path: e.path, outcome: e.outcome.kind, ...extra }) + `
 `);
           return;
         }
         if (mode === "tty") {
           renderTtyLine();
           return;
+        }
+        {
+          const t = now();
+          if (t - lastPlainMs >= PLAIN_THROTTLE_MS) {
+            lastPlainMs = t;
+            const p = curTotal ? ` (${pct(curN, curTotal)}%)` : "";
+            const wait = waited > 0 ? `  (rate-limited, waited ${waited}s)` : "";
+            out(`  ${UP} ${curN}/${curTotal}${p}  ${curPath}${wait}
+`);
+          }
         }
         return;
       }
@@ -3146,6 +3169,8 @@ function createReporter(opts) {
             act: e.act,
             exit: e.exitCode,
             elapsed_s,
+            stopped: e.stopped ?? false,
+            outcomes: tally,
             ...e.error !== undefined && { error: e.error },
             ...e.detail !== undefined && { detail: e.detail }
           }) + `
@@ -9924,12 +9949,12 @@ async function runPutBatch(client, targets, opts) {
   const retry = opts.retry ?? passthroughRetry;
   const [treeResult, leasesResult] = await Promise.all([client.getTree(opts.treePrefix), client.listLeases()]);
   if ("error" in treeResult) {
-    opts.onProgress?.({ kind: "finish", op: "put", total: 0, act: 0, exitCode: 2, error: treeResult.error, detail: treeResult.detail });
-    return { rows: [], hardError: { error: treeResult.error, detail: treeResult.detail }, informed: false, exitCode: 2 };
+    opts.onProgress?.({ kind: "finish", op: "put", total: 0, act: 0, exitCode: 2, stopped: true, error: treeResult.error, detail: treeResult.detail });
+    return { rows: [], hardError: { error: treeResult.error, detail: treeResult.detail }, informed: false, stopped: true, exitCode: 2 };
   }
   if (!Array.isArray(leasesResult)) {
-    opts.onProgress?.({ kind: "finish", op: "put", total: 0, act: 0, exitCode: 2, error: leasesResult.error, detail: leasesResult.detail });
-    return { rows: [], hardError: { error: leasesResult.error, detail: leasesResult.detail }, informed: false, exitCode: 2 };
+    opts.onProgress?.({ kind: "finish", op: "put", total: 0, act: 0, exitCode: 2, stopped: true, error: leasesResult.error, detail: leasesResult.detail });
+    return { rows: [], hardError: { error: leasesResult.error, detail: leasesResult.detail }, informed: false, stopped: true, exitCode: 2 };
   }
   const tipByPath = new Map;
   const knownTaken = new Set;
@@ -9973,34 +9998,46 @@ async function runPutBatch(client, targets, opts) {
   opts.onProgress?.({ kind: "plan", op: "put", label: opts.treePrefix || "(room root)", ...categorizePutActions(planned.map((p) => p.action)) });
   const rows = [];
   let hardError;
+  let stopped = false;
   let n = 0;
   for (const { target, key, localHash, ctx, planInput, action, tip } of planned) {
     n++;
     opts.onProgress?.({ kind: "start", n, total: planned.length, path: target.repoPath });
-    let outcome = await applyWithRetry(ctx, action, tip?.tipSeq, now, retry);
     let tipSeq = tip?.tipSeq;
-    if (outcome.kind === "error" && outcome.error === "stale_base") {
-      const healed = await healStaleRace(client, target, planInput, ctx, now, retry);
-      outcome = healed.outcome;
-      tipSeq = healed.tipSeq;
-    }
-    if (outcome.kind === "merged")
-      writeFileSync4(target.localAbs, outcome.pushedBytes);
-    if (outcome.kind === "added" || outcome.kind === "resurrected" || outcome.kind === "fast-forwarded") {
-      writeSidecar(opts.roomId, key, buildSidecar(target.localBytes, "r2:" + outcome.hash), opts.home);
-    } else if (outcome.kind === "unchanged") {
-      writeSidecar(opts.roomId, key, buildSidecar(target.localBytes, localHash), opts.home);
-    } else if (outcome.kind === "merged") {
-      writeSidecar(opts.roomId, key, buildSidecar(outcome.pushedBytes, "r2:" + outcome.hash), opts.home);
+    let outcome;
+    try {
+      outcome = await applyWithRetry(ctx, action, tip?.tipSeq, now, retry);
+      if (outcome.kind === "error" && outcome.error === "stale_base") {
+        const healed = await healStaleRace(client, target, planInput, ctx, now, retry);
+        outcome = healed.outcome;
+        tipSeq = healed.tipSeq;
+      }
+      if (outcome.kind === "merged")
+        writeFileSync4(target.localAbs, outcome.pushedBytes);
+      if (outcome.kind === "added" || outcome.kind === "resurrected" || outcome.kind === "fast-forwarded") {
+        writeSidecar(opts.roomId, key, buildSidecar(target.localBytes, "r2:" + outcome.hash), opts.home);
+      } else if (outcome.kind === "unchanged") {
+        writeSidecar(opts.roomId, key, buildSidecar(target.localBytes, localHash), opts.home);
+      } else if (outcome.kind === "merged") {
+        writeSidecar(opts.roomId, key, buildSidecar(outcome.pushedBytes, "r2:" + outcome.hash), opts.home);
+      }
+    } catch (e) {
+      outcome = { kind: "error", error: "exception", detail: e instanceof Error ? e.message : String(e) };
     }
     rows.push({ repoPath: target.repoPath, outcome, tipSeq });
     opts.onProgress?.({ kind: "put-file", n, total: planned.length, path: target.repoPath, outcome });
     if (outcome.kind === "error") {
-      hardError = { error: outcome.error, detail: outcome.detail, hint: outcome.hint };
+      if (opts.stopOnError) {
+        hardError = { error: outcome.error, detail: outcome.detail, hint: outcome.hint };
+        stopped = true;
+        break;
+      }
+      continue;
+    }
+    if (opts.strict && outcome.kind === "conflict-markers-local") {
+      stopped = true;
       break;
     }
-    if (opts.strict && outcome.kind === "conflict-markers-local")
-      break;
   }
   const notable = rows.filter((r) => INFORM_WORTHY[r.outcome.kind] === true);
   const attributable = notable.filter((r) => (r.outcome.kind === "conflict-markers-local" || r.outcome.kind === "forked") && r.tipSeq !== undefined);
@@ -10014,11 +10051,12 @@ async function runPutBatch(client, targets, opts) {
     const r = await retry(() => client.postEntry({ performative: "inform", body: formatPutSignalBody(notable) }), (res) => !res.ok && res.error === "rate_limited", (res) => res.ok ? undefined : res.retry_after_s);
     informed = r.ok;
   }
-  const exitCode = hardError ? 2 : notable.length > 0 ? 1 : 0;
-  opts.onProgress?.({ kind: "finish", op: "put", total: planned.length, act: categorizePutActions(planned.map((p) => p.action)).upload, exitCode });
+  const anyError = rows.some((r) => r.outcome.kind === "error");
+  const exitCode = hardError || anyError ? 2 : notable.length > 0 ? 1 : 0;
+  opts.onProgress?.({ kind: "finish", op: "put", total: planned.length, act: categorizePutActions(planned.map((p) => p.action)).upload, exitCode, stopped });
   if (hardError)
-    return { rows, hardError, informed, exitCode: 2 };
-  return { rows, informed, exitCode };
+    return { rows, hardError, informed, stopped, exitCode: 2 };
+  return { rows, informed, stopped, exitCode };
 }
 function formatPutRowMessage(repoPath, outcome) {
   switch (outcome.kind) {
@@ -10048,6 +10086,82 @@ function formatPutRowMessage(repoPath, outcome) {
     case "error":
       return `  ${repoPath} — [${outcome.error}]${outcome.detail ? " " + outcome.detail : ""}${outcome.hint ? " — " + outcome.hint : ""}`;
   }
+}
+function summarizePutRows(rows) {
+  const s = { total: rows.length, uploaded: 0, unchanged: 0, merged: 0, resurrected: 0, conflicts: 0, locked: 0, skipped: 0, errors: 0 };
+  for (const { outcome } of rows) {
+    switch (outcome.kind) {
+      case "added":
+      case "fast-forwarded":
+        s.uploaded++;
+        break;
+      case "unchanged":
+        s.unchanged++;
+        break;
+      case "merged":
+        s.merged++;
+        break;
+      case "resurrected":
+        s.resurrected++;
+        break;
+      case "conflict-markers-local":
+      case "forked":
+        s.conflicts++;
+        break;
+      case "locked":
+        s.locked++;
+        break;
+      case "skipped-deleted":
+      case "skipped-behind":
+      case "refused-never-synced":
+      case "refused-markers":
+        s.skipped++;
+        break;
+      case "error":
+        s.errors++;
+        break;
+      default: {
+        const _exhaustive = outcome;
+        break;
+      }
+    }
+  }
+  return s;
+}
+function formatPutSummary(label, s) {
+  const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+  const parts = [`${s.uploaded} uploaded`, `${s.unchanged} unchanged`];
+  if (s.merged)
+    parts.push(`${s.merged} merged`);
+  if (s.resurrected)
+    parts.push(`${s.resurrected} resurrected`);
+  if (s.conflicts)
+    parts.push(plural(s.conflicts, "conflict"));
+  if (s.locked)
+    parts.push(`${s.locked} locked`);
+  if (s.skipped)
+    parts.push(`${s.skipped} skipped`);
+  if (s.errors)
+    parts.push(plural(s.errors, "error"));
+  return `${label} — ${plural(s.total, "file")}: ${parts.join(", ")}`;
+}
+var PUT_ROW_NEEDS_ATTENTION = {
+  "conflict-markers-local": true,
+  forked: true,
+  error: true,
+  locked: true,
+  "refused-markers": true,
+  "refused-never-synced": true,
+  "skipped-behind": true,
+  resurrected: true,
+  added: false,
+  "fast-forwarded": false,
+  unchanged: false,
+  merged: false,
+  "skipped-deleted": false
+};
+function putRowNeedsAttention(outcome) {
+  return PUT_ROW_NEEDS_ATTENTION[outcome.kind];
 }
 function formatPutSignalBody(rows) {
   const lines = rows.map(({ repoPath, outcome, tipSeq, tipAuthor }) => {
@@ -10508,7 +10622,7 @@ function wantsVersion(argv) {
 }
 function getVersion() {
   if (true)
-    return "1.16.0";
+    return "1.17.0";
   try {
     const here = dirname6(fileURLToPath(import.meta.url));
     return readFileSync6(resolve3(here, "../../../VERSION"), "utf8").trim();
@@ -11622,26 +11736,43 @@ var FS_CMDS = {
       selfId: senderId,
       strict,
       treePrefix,
+      stopOnError: flagBool2(args2, "stop-on-error"),
       retry: makeRateRetry(reporter.onWait),
       onProgress: reporter.sink
     });
     if (json) {
-      process.exitCode = result.hardError ? 2 : result.exitCode;
+      process.exitCode = result.exitCode;
       return;
     }
-    for (const row of result.rows)
-      ok5(formatPutRowMessage(row.repoPath, row.outcome));
-    if (result.hardError) {
+    const verbose = flagBool2(args2, "verbose") || flagBool2(args2, "v");
+    for (const row of result.rows) {
+      if (verbose || putRowNeedsAttention(row.outcome))
+        ok5(formatPutRowMessage(row.repoPath, row.outcome));
+    }
+    if (result.hardError && result.rows.length === 0) {
       const e = result.hardError;
-      process.stderr.write(`fs put: [${e.error}]${e.detail ? " " + e.detail : ""}${e.hint ? " — " + e.hint : ""}
+      process.stderr.write(`fs put failed: [${e.error}]${e.detail ? " " + e.detail : ""}${e.hint ? " — " + e.hint : ""}
 `);
       process.exitCode = 2;
       return;
     }
-    const unchanged = result.rows.filter((r) => r.outcome.kind === "unchanged").length;
-    ok5(`fs put: ${batchLabel}${result.informed ? " — conflicts/forks/resurrections signaled (see 'mesh fs status')" : ""}`);
-    if (unchanged > 0)
-      ok5(`verify: mesh fs status${treePrefix ? " " + treePrefix : ""}`);
+    const summary = summarizePutRows(result.rows);
+    ok5(`fs put ${result.stopped ? "stopped early" : "done"}: ${formatPutSummary(batchLabel, summary)}  [exit ${result.exitCode}]`);
+    if (result.stopped) {
+      const done = result.rows.length, total = targets.length;
+      const where = result.hardError ? "see the cause below" : "see the flagged rows above";
+      ok5(`  aborted at ${done}/${total} files — ${total - done} not attempted (${where}, resolve, then re-run to resume${flagBool2(args2, "stop-on-error") ? "; or drop --stop-on-error to skip failures and continue" : ""})`);
+    }
+    if (result.hardError) {
+      const e = result.hardError;
+      process.stderr.write(`  cause: [${e.error}]${e.detail ? " " + e.detail : ""}${e.hint ? " — " + e.hint : ""}
+`);
+    } else if (summary.errors > 0) {
+      ok5(`  ${summary.errors} file(s) failed and were skipped (rows above); re-run to retry, or --stop-on-error to abort on the first failure`);
+    }
+    if (result.informed)
+      ok5("  conflicts/forks/resurrections signaled (see 'mesh fs status')");
+    ok5(`verify: mesh fs status${treePrefix ? " " + treePrefix : ""}${verbose ? "" : "   (--verbose for the full per-file list)"}`);
     process.exitCode = result.exitCode;
   },
   ls: async (client, args2) => {
@@ -12093,7 +12224,7 @@ async function cmdFs(args2) {
   const sub = args2.positional.shift();
   const handler = sub ? FS_CMDS[sub] : undefined;
   if (!handler) {
-    die5(`usage: mesh fs put <path> [--as <repopath>] [--strict] [--json] | ls [<prefix>] [-f] [--into <dir>] | get <repopath> [--into <dir>] [--prune] [--json] | rm <repopath> | edit <path> [--into <dir>] | lock <path> | unlock <path> | grep <query> [--prefix <path-prefix>] [--limit <n>] [--hydrate [--into <dir>]] | hydrate [<prefix>] [--into <dir>] [--prune] | grant <subject> <path> <grade> | grants | revoke <subject> <path> | role <participant> <role> | roles | role-rm <participant> <role> | leases | config <open|closed> | deps <path> | request <path> [--grade read] | status [<prefix>] [--deep] [--porcelain] [--root <dir>] | diff <path> [--base] [--root <dir>]
+    die5(`usage: mesh fs put <path> [--as <repopath>] [--strict] [--verbose] [--stop-on-error] [--json] | ls [<prefix>] [-f] [--into <dir>] | get <repopath> [--into <dir>] [--prune] [--json] | rm <repopath> | edit <path> [--into <dir>] | lock <path> | unlock <path> | grep <query> [--prefix <path-prefix>] [--limit <n>] [--hydrate [--into <dir>]] | hydrate [<prefix>] [--into <dir>] [--prune] | grant <subject> <path> <grade> | grants | revoke <subject> <path> | role <participant> <role> | roles | role-rm <participant> <role> | leases | config <open|closed> | deps <path> | request <path> [--grade read] | status [<prefix>] [--deep] [--porcelain] [--root <dir>] | diff <path> [--base] [--root <dir>]
   write policy by extension: code (.ts .js .py .go .rs …) -> merge on \`put\` · prose (.md .txt) -> shared CRDT via \`edit\` · opt-in serialize: \`lock\`/\`unlock\`
   grades: discover < read < write < exclusive`);
   }
@@ -12322,9 +12453,9 @@ tasks:
 
 files:
   (workspace root = cwd by default, --root <dir> overrides, --into <dir> stays for one-off scratch staging; identity = normalizeId(path) relative to that root, same in the room tree)
-  fs put <path|dir> [--as <repopath>] [--all] [--json]      Upload a file or directory; .meshignore excludes, --all includes hidden files; --json streams NDJSON progress
+  fs put <path|dir> [--as <repopath>] [--all] [--verbose] [--stop-on-error] [--json]  Upload a file or directory (.meshignore excludes, --all includes hidden). Streams a live progress line by default (in place on a TTY, throttled lines when captured), then a metrics summary — \`fs put done: … [exit N]\` — plus per-file lines only for outcomes needing attention. --verbose lists every file; a too-large/rejected file is skipped and reported, --stop-on-error aborts at the first failure; --json streams NDJSON.
   fs ls [<prefix>] [-f] [--into <dir>|--root <dir>]         List the shared workspace tree (-f: live view — tree, leases, hydration); local column compares against the workspace root
-  fs get <repopath|prefix> [--into <dir>|--root <dir>] [--prune] [--json] Hydrate a file/subtree; --prune drops local copies the room cleanly deleted; --json streams NDJSON progress
+  fs get <repopath|prefix> [--into <dir>|--root <dir>] [--prune] [--json] Hydrate a file/subtree (streams a live progress line by default); --prune drops local copies the room cleanly deleted; --json streams NDJSON progress
   fs rm <repopath> [-r]                                     Delete a file (or a whole subtree with -r)
   fs edit <path> [--into <dir>|--root <dir>]                Subscribe + edit a live Yjs doc (Ctrl+C to exit)
   fs lock <path>                                            Acquire exclusive lease (file.lock)
