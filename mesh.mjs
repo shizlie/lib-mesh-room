@@ -1932,6 +1932,9 @@ class MeshClient {
   async setDefaultAccess(access) {
     return this._postSeq("/config", { default_access: access });
   }
+  async setRateLimit(rateLimit) {
+    return this._postSeq("/config", { rate_limit: rateLimit });
+  }
   async revokeGrant(subject, path2) {
     return this._postSeq("/grants/revoke", { path_prefix: path2, subject });
   }
@@ -3005,6 +3008,180 @@ async function fsPutOcc(client, repopath, bytes, baseOverrideRef) {
   }
   return { ok: false, kind: "error", error: r.error, detail: r.detail, hint: r.hint, retry_after_s: r.retry_after_s };
 }
+
+// src/progress.ts
+var CLEAR_LINE2 = "\x1B[2K\r";
+function resolveMode(json, isTty) {
+  if (json)
+    return "json";
+  return isTty ? "tty" : "plain";
+}
+function parseRate(s) {
+  const parts = s.split(";");
+  const rateM = /^(\d+(?:\.\d+)?)\/min$/.exec((parts[0] ?? "").trim());
+  if (!rateM)
+    return;
+  const rate = parseFloat(rateM[1]);
+  let burst = rate;
+  const burstM = /^burst=(\d+)$/.exec((parts[1] ?? "").trim());
+  if (burstM)
+    burst = parseInt(burstM[1], 10);
+  return { rate, burst };
+}
+function etaSeconds(act, rateLimit) {
+  if (rateLimit === undefined)
+    return;
+  const p = parseRate(rateLimit);
+  if (!p)
+    return;
+  if (p.rate <= 0)
+    return;
+  const floor = Math.ceil(p.burst * 0.2);
+  const instant = Math.max(0, p.burst - floor);
+  const throttled = Math.max(0, act - instant);
+  return Math.round(throttled / p.rate * 60);
+}
+function pct(n, total) {
+  return total === 0 ? 100 : Math.floor(n / total * 100);
+}
+function humanEta(s) {
+  if (s < 60)
+    return `~${s}s`;
+  return `~${Math.round(s / 60)} min`;
+}
+function createReporter(opts) {
+  const out = opts.out ?? ((s) => {
+    process.stderr.write(s);
+  });
+  const jsonOut = opts.jsonOut ?? ((s) => {
+    process.stdout.write(s);
+  });
+  const now = opts.now ?? (() => Date.now());
+  const { mode } = opts;
+  let curN = 0, curTotal = 0, curPath = "";
+  let waited = 0;
+  let rateNoticeShown = false;
+  let startMs = 0;
+  let doneCount = 0;
+  function liveEtaStr() {
+    if (doneCount < 1 || startMs === 0)
+      return "";
+    const elapsedS = (now() - startMs) / 1000;
+    if (elapsedS <= 0)
+      return "";
+    const perFile = elapsedS / doneCount;
+    const remaining = Math.max(0, curTotal - curN);
+    return `   ${DIM2}~${humanEta(Math.round(perFile * remaining)).replace(/^~/, "")} left${RESET2}`;
+  }
+  function renderTtyLine() {
+    const p = curTotal ? ` (${pct(curN, curTotal)}%)` : "";
+    const wait = waited > 0 ? `   ${DIM2}rate-limited, waited ${waited}s${RESET2}` : "";
+    out(`${CLEAR_LINE2}${UP} ${curN}/${curTotal}${p}  ${curPath}${wait}${liveEtaStr()}`);
+  }
+  const sink = (e) => {
+    switch (e.kind) {
+      case "plan": {
+        if (mode === "json") {
+          jsonOut(JSON.stringify({
+            type: "plan",
+            op: e.op,
+            label: e.label,
+            total: e.total,
+            upload: e.upload,
+            new: e.newCount,
+            changed: e.changed,
+            unchanged: e.unchanged,
+            locked: e.locked,
+            skipped: e.skipped,
+            eta_s: e.op === "put" ? etaSeconds(e.upload, opts.rateLimit) ?? null : null
+          }) + `
+`);
+          return;
+        }
+        const verb = e.op === "put" ? "upload" : "download";
+        const eta = e.op === "put" ? etaSeconds(e.upload, opts.rateLimit) : undefined;
+        const etaStr = eta !== undefined && eta > 0 ? `, ${humanEta(eta)} est. at current rate limit` : "";
+        out(`${e.op} ${e.label}
+`);
+        out(`  ${e.total} files: ${e.upload} to ${verb}` + (e.op === "put" ? ` (${e.newCount} new, ${e.changed} changed)` : "") + `, ${e.unchanged} unchanged` + (e.locked ? `, ${e.locked} locked` : "") + (e.skipped ? `, ${e.skipped} skipped` : "") + `${etaStr}
+`);
+        curTotal = e.total;
+        return;
+      }
+      case "start": {
+        if (startMs === 0)
+          startMs = now();
+        curN = e.n;
+        curTotal = e.total;
+        curPath = e.path;
+        waited = 0;
+        if (mode === "tty")
+          renderTtyLine();
+        return;
+      }
+      case "put-file":
+      case "get-file": {
+        curN = e.n;
+        curTotal = e.total;
+        curPath = e.path;
+        doneCount++;
+        if (mode === "json") {
+          jsonOut(JSON.stringify({ type: "file", n: e.n, total: e.total, path: e.path, outcome: e.outcome.kind }) + `
+`);
+          return;
+        }
+        if (mode === "tty") {
+          renderTtyLine();
+          return;
+        }
+        return;
+      }
+      case "finish": {
+        if (mode === "json") {
+          const elapsed_s = startMs === 0 ? 0 : Math.max(0, Math.round((now() - startMs) / 1000));
+          jsonOut(JSON.stringify({
+            type: "done",
+            op: e.op,
+            total: e.total,
+            act: e.act,
+            exit: e.exitCode,
+            elapsed_s,
+            ...e.error !== undefined && { error: e.error },
+            ...e.detail !== undefined && { detail: e.detail }
+          }) + `
+`);
+          return;
+        }
+        if (mode === "tty") {
+          out(CLEAR_LINE2);
+          return;
+        }
+        return;
+      }
+    }
+  };
+  const onWait = (cumWaitedS) => {
+    waited = cumWaitedS;
+    if (mode === "json") {
+      jsonOut(JSON.stringify({ type: "ratelimit", waited_s: cumWaitedS }) + `
+`);
+      return;
+    }
+    if (mode === "tty") {
+      renderTtyLine();
+      return;
+    }
+    if (!rateNoticeShown) {
+      rateNoticeShown = true;
+      out(`  … rate-limited; throttling to the room's limit (normal — will continue)
+`);
+    }
+  };
+  return { sink, onWait };
+}
+var UP = "⬆";
+var DIM2 = "\x1B[2m";
+var RESET2 = "\x1B[0m";
 
 // src/main.ts
 import { readFileSync as readFileSync6, statSync, readdirSync as readdirSync3 } from "node:fs";
@@ -8822,13 +8999,23 @@ async function fsCmdLeases(client, _args, _senderId) {
   ok2(renderLeases(leases));
 }
 async function fsCmdConfig(client, args2, _senderId) {
-  const access = args2.positional[0];
-  if (access !== "open" && access !== "closed")
+  const first = args2.positional[0];
+  if (first === "rate") {
+    const spec = args2.positional[1];
+    if (!spec)
+      die2('fs config: rate <spec> is required (e.g. "30/min;burst=60")');
+    const r2 = await client.setRateLimit(spec);
+    if (!r2.ok)
+      die2(`fs config: [${r2.error}] ${r2.detail}${r2.hint ? " — " + r2.hint : ""}`);
+    ok2(`fs config: rate_limit → ${spec} (seq=${r2.seq})`);
+    return;
+  }
+  if (first !== "open" && first !== "closed")
     die2("fs config: <open|closed> is required");
-  const r = await client.setDefaultAccess(access);
+  const r = await client.setDefaultAccess(first);
   if (!r.ok)
     die2(`fs config: [${r.error}] ${r.detail}${r.hint ? " — " + r.hint : ""}`);
-  ok2(`fs config: default_access → ${access} (seq=${r.seq})`);
+  ok2(`fs config: default_access → ${first} (seq=${r.seq})`);
 }
 
 // src/ignore.ts
@@ -9692,27 +9879,69 @@ async function resolveTipAuthors(client, seqs) {
   }
   return authors;
 }
+function categorizePutActions(actions) {
+  const c = { total: actions.length, upload: 0, newCount: 0, changed: 0, unchanged: 0, locked: 0, skipped: 0 };
+  for (const a of actions) {
+    switch (a.kind) {
+      case "add":
+        c.upload++;
+        c.newCount++;
+        break;
+      case "resurrect":
+        c.upload++;
+        c.newCount++;
+        break;
+      case "fast-forward":
+        c.upload++;
+        c.changed++;
+        break;
+      case "merge-attempt":
+        c.upload++;
+        c.changed++;
+        break;
+      case "noop-refresh":
+        c.unchanged++;
+        break;
+      case "locked":
+        c.locked++;
+        break;
+      case "skip-behind":
+      case "skip-deleted":
+      case "refuse":
+      case "refuse-markers":
+        c.skipped++;
+        break;
+      default: {
+        const _exhaustive = a;
+        break;
+      }
+    }
+  }
+  return c;
+}
 async function runPutBatch(client, targets, opts) {
   const now = opts.now ?? Date.now();
   const retry = opts.retry ?? passthroughRetry;
   const [treeResult, leasesResult] = await Promise.all([client.getTree(opts.treePrefix), client.listLeases()]);
-  if ("error" in treeResult)
+  if ("error" in treeResult) {
+    opts.onProgress?.({ kind: "finish", op: "put", total: 0, act: 0, exitCode: 2, error: treeResult.error, detail: treeResult.detail });
     return { rows: [], hardError: { error: treeResult.error, detail: treeResult.detail }, informed: false, exitCode: 2 };
-  if (!Array.isArray(leasesResult))
+  }
+  if (!Array.isArray(leasesResult)) {
+    opts.onProgress?.({ kind: "finish", op: "put", total: 0, act: 0, exitCode: 2, error: leasesResult.error, detail: leasesResult.detail });
     return { rows: [], hardError: { error: leasesResult.error, detail: leasesResult.detail }, informed: false, exitCode: 2 };
+  }
   const tipByPath = new Map;
   const knownTaken = new Set;
-  for (const n of treeResult.tree) {
-    knownTaken.add(n.path);
-    if (n.content_hash)
-      tipByPath.set(n.path, { contentHash: n.content_hash, tipSeq: n.tip_seq });
+  for (const n2 of treeResult.tree) {
+    knownTaken.add(n2.path);
+    if (n2.content_hash)
+      tipByPath.set(n2.path, { contentHash: n2.content_hash, tipSeq: n2.tip_seq });
   }
   const leaseByPath = new Map;
   for (const l of leasesResult)
     leaseByPath.set(l.path, { holder: l.holder, expiresAtMs: l.lease_expires });
-  const rows = [];
-  let hardError;
-  for (const target of targets) {
+  const planned = targets.map((target) => {
     const key = normalizeId(target.repoPath);
     const sidecar = readSidecar(opts.roomId, key, opts.home);
     const tip = tipByPath.get(key);
@@ -9739,6 +9968,15 @@ async function runPutBatch(client, targets, opts) {
       tipHash: tip?.contentHash,
       knownTaken
     };
+    return { target, key, localHash, ctx, planInput, action, tip };
+  });
+  opts.onProgress?.({ kind: "plan", op: "put", label: opts.treePrefix || "(room root)", ...categorizePutActions(planned.map((p) => p.action)) });
+  const rows = [];
+  let hardError;
+  let n = 0;
+  for (const { target, key, localHash, ctx, planInput, action, tip } of planned) {
+    n++;
+    opts.onProgress?.({ kind: "start", n, total: planned.length, path: target.repoPath });
     let outcome = await applyWithRetry(ctx, action, tip?.tipSeq, now, retry);
     let tipSeq = tip?.tipSeq;
     if (outcome.kind === "error" && outcome.error === "stale_base") {
@@ -9756,6 +9994,7 @@ async function runPutBatch(client, targets, opts) {
       writeSidecar(opts.roomId, key, buildSidecar(outcome.pushedBytes, "r2:" + outcome.hash), opts.home);
     }
     rows.push({ repoPath: target.repoPath, outcome, tipSeq });
+    opts.onProgress?.({ kind: "put-file", n, total: planned.length, path: target.repoPath, outcome });
     if (outcome.kind === "error") {
       hardError = { error: outcome.error, detail: outcome.detail, hint: outcome.hint };
       break;
@@ -9775,9 +10014,11 @@ async function runPutBatch(client, targets, opts) {
     const r = await retry(() => client.postEntry({ performative: "inform", body: formatPutSignalBody(notable) }), (res) => !res.ok && res.error === "rate_limited", (res) => res.ok ? undefined : res.retry_after_s);
     informed = r.ok;
   }
+  const exitCode = hardError ? 2 : notable.length > 0 ? 1 : 0;
+  opts.onProgress?.({ kind: "finish", op: "put", total: planned.length, act: categorizePutActions(planned.map((p) => p.action)).upload, exitCode });
   if (hardError)
     return { rows, hardError, informed, exitCode: 2 };
-  return { rows, informed, exitCode: notable.length > 0 ? 1 : 0 };
+  return { rows, informed, exitCode };
 }
 function formatPutRowMessage(repoPath, outcome) {
   switch (outcome.kind) {
@@ -10041,25 +10282,63 @@ function getRowNeedsVerify(outcome) {
       return false;
   }
 }
+function categorizeGetActions(actions) {
+  const c = { total: actions.length, upload: 0, newCount: 0, changed: 0, unchanged: 0, locked: 0, skipped: 0 };
+  for (const a of actions) {
+    switch (a.kind) {
+      case "download":
+      case "rehydrate":
+        c.upload++;
+        c.newCount++;
+        break;
+      case "update":
+      case "merge-attempt":
+      case "fork-theirs":
+        c.upload++;
+        c.changed++;
+        break;
+      case "noop-insync":
+      case "adopt":
+      case "sidecar-refresh":
+      case "noop":
+        c.unchanged++;
+        break;
+      case "report-deleted":
+      case "drop-sidecar":
+      case "report-ahead":
+      case "refused-markers":
+      case "gated":
+        c.skipped++;
+        break;
+      default: {
+        const _exhaustive = a;
+        break;
+      }
+    }
+  }
+  return c;
+}
 async function runGetBatch(client, opts) {
   const treeResult = await client.getTree(opts.treePrefix);
-  if ("error" in treeResult)
+  if ("error" in treeResult) {
+    opts.onProgress?.({ kind: "finish", op: "get", total: 0, act: 0, exitCode: 2, error: treeResult.error, detail: treeResult.detail });
     return { rows: [], hardError: { error: treeResult.error, detail: treeResult.detail }, exitCode: 2 };
+  }
   const tipByPath = new Map;
-  for (const n of treeResult.tree)
-    tipByPath.set(n.path, { contentHash: n.content_hash, tipSeq: n.tip_seq });
+  for (const n2 of treeResult.tree)
+    tipByPath.set(n2.path, { contentHash: n2.content_hash, tipSeq: n2.tip_seq });
   const allPaths = new Set((opts.targets ?? []).map(normalizeId));
   if (!opts.explicitOnly)
     for (const p of tipByPath.keys())
       allPaths.add(p);
   const sortedPaths = [...allPaths].sort();
   const base = resolve2(opts.into);
-  const rows = [];
-  let hardError;
+  const planned = [];
+  const escapes = [];
   for (const repoPath of sortedPaths) {
     const abs2 = resolve2(opts.into, repoPath);
     if (abs2 !== base && !abs2.startsWith(base + sep2)) {
-      rows.push({ repoPath, state: "vacuous", localAbs: abs2, outcome: { kind: "path-escape" } });
+      escapes.push({ repoPath, state: "vacuous", localAbs: abs2, outcome: { kind: "path-escape" } });
       continue;
     }
     let localBytes;
@@ -10081,9 +10360,22 @@ async function runGetBatch(client, opts) {
       hasMarkers: hasPreExistingConflictMarkers(localBytes ? Buffer.from(localBytes) : undefined),
       gated
     };
-    const state = classifySync(planInput);
+    const state = classifySync({ ...planInput, tipGated: planInput.gated });
     const action = planGetTarget(planInput);
+    if (state === "vacuous")
+      continue;
     const ctx = { client, repoPath, into: opts.into, localAbs: abs2, localBytes, sidecar, tip, prune: opts.prune };
+    planned.push({ repoPath, abs: abs2, ctx, state, action });
+  }
+  opts.onProgress?.({ kind: "plan", op: "get", label: opts.treePrefix || "(room root)", ...categorizeGetActions(planned.map((p) => p.action)) });
+  const rows = [...escapes];
+  let hardError;
+  let n = 0;
+  const total = planned.length + escapes.length;
+  for (const { repoPath, abs: abs2, ctx, state, action } of planned) {
+    n++;
+    opts.onProgress?.({ kind: "start", n, total, path: repoPath });
+    const key = normalizeId(repoPath);
     const outcome = await applyGetTarget(ctx, action);
     if (outcome.kind === "downloaded" || outcome.kind === "rehydrated" || outcome.kind === "updated" || outcome.kind === "adopted" || outcome.kind === "converged" || outcome.kind === "merged-local") {
       writeSidecar(opts.roomId, key, buildSidecar(outcome.bytes, outcome.tipHash), opts.home);
@@ -10093,12 +10385,14 @@ async function runGetBatch(client, opts) {
       dropSidecar(opts.roomId, key, opts.home);
     }
     rows.push({ repoPath, state, outcome, localAbs: abs2 });
+    opts.onProgress?.({ kind: "get-file", n, total, path: repoPath, outcome });
     if (outcome.kind === "error") {
       hardError = { error: outcome.error, detail: outcome.detail, hint: outcome.hint };
       break;
     }
   }
   const exitCode = hardError ? 2 : rows.some((r) => GET_EXIT1[r.outcome.kind]) ? 1 : 0;
+  opts.onProgress?.({ kind: "finish", op: "get", total, act: categorizeGetActions(planned.map((p) => p.action)).upload, exitCode });
   return { rows, hardError, exitCode };
 }
 function formatGetRowMessage(repoPath, outcome) {
@@ -10214,7 +10508,7 @@ function wantsVersion(argv) {
 }
 function getVersion() {
   if (true)
-    return "1.14.0";
+    return "1.16.0";
   try {
     const here = dirname6(fileURLToPath(import.meta.url));
     return readFileSync6(resolve3(here, "../../../VERSION"), "utf8").trim();
@@ -10225,10 +10519,10 @@ function getVersion() {
 function grepLine(r) {
   return `${r.path}: ${r.snippet}`;
 }
-async function hydrateGrepWinners(client, paths, into, roomId, home) {
+async function hydrateGrepWinners(client, paths, into, roomId, home, onProgress) {
   if (paths.length === 0)
     return { rows: [], exitCode: 0 };
-  const result = await runGetBatch(client, { roomId, home, into, prune: false, targets: paths, explicitOnly: true });
+  const result = await runGetBatch(client, { roomId, home, into, prune: false, targets: paths, explicitOnly: true, onProgress });
   for (const row of result.rows) {
     const line = formatGetRowMessage(row.repoPath, row.outcome);
     if (line)
@@ -10236,8 +10530,8 @@ async function hydrateGrepWinners(client, paths, into, roomId, home) {
   }
   return result;
 }
-async function hydrateSubtree(client, prefix, into, roomId, home, prune = false) {
-  const result = await runGetBatch(client, { roomId, home, into, prune, treePrefix: prefix || undefined });
+async function hydrateSubtree(client, prefix, into, roomId, home, prune = false, onProgress) {
+  const result = await runGetBatch(client, { roomId, home, into, prune, treePrefix: prefix || undefined, onProgress });
   for (const row of result.rows) {
     const line = formatGetRowMessage(row.repoPath, row.outcome);
     if (line)
@@ -11190,19 +11484,25 @@ function walkDirFiles(root, isIgnored) {
   rec(root, "");
   return out.sort();
 }
-async function withRateRetry(attempt, isRateLimited, retryAfterS) {
-  let r = await attempt();
-  let waited = 0;
-  while (isRateLimited(r) && waited < 300) {
-    const waitS = Math.max(1, retryAfterS(r) ?? 5);
-    process.stderr.write(`  … rate-limited; waiting ${waitS}s
+function makeRateRetry(onWait) {
+  return async (attempt, isRateLimited, retryAfterS) => {
+    let r = await attempt();
+    let waited = 0;
+    while (isRateLimited(r) && waited < 300) {
+      const waitS = Math.min(Math.max(1, retryAfterS(r) ?? 5), Math.max(1, 300 - waited));
+      waited += waitS;
+      if (onWait)
+        onWait(waited);
+      else
+        process.stderr.write(`  … rate-limited; waiting ${waitS}s
 `);
-    await new Promise((res) => setTimeout(res, waitS * 1000));
-    waited += waitS;
-    r = await attempt();
-  }
-  return r;
+      await new Promise((res) => setTimeout(res, waitS * 1000));
+      r = await attempt();
+    }
+    return r;
+  };
 }
+var withRateRetry = makeRateRetry();
 async function statusScan(client, opts) {
   const { prefix, root, home, deep } = opts;
   const normPrefix = prefix ? normalizeId(prefix) : "";
@@ -11307,14 +11607,28 @@ var FS_CMDS = {
       treePrefix = as;
       batchLabel = as;
     }
+    const json = flagBool2(args2, "json");
+    const mode = resolveMode(json, process.stderr.isTTY ?? false);
+    let rateLimit;
+    try {
+      rateLimit = (await client.getState()).defaults.rate_limit;
+    } catch {
+      rateLimit = undefined;
+    }
+    const reporter = createReporter({ mode, rateLimit });
     const result = await runPutBatch(client, targets, {
       roomId: client.roomId,
       home,
       selfId: senderId,
       strict,
       treePrefix,
-      retry: withRateRetry
+      retry: makeRateRetry(reporter.onWait),
+      onProgress: reporter.sink
     });
+    if (json) {
+      process.exitCode = result.hardError ? 2 : result.exitCode;
+      return;
+    }
     for (const row of result.rows)
       ok5(formatPutRowMessage(row.repoPath, row.outcome));
     if (result.hardError) {
@@ -11423,14 +11737,21 @@ var FS_CMDS = {
     const into = resolveWorkspaceRoot(flag5(args2, "into"), flag5(args2, "root"));
     const home = flag5(args2, "home");
     const prune = flagBool2(args2, "prune");
+    const json = flagBool2(args2, "json");
+    const reporter = createReporter({ mode: resolveMode(json, process.stderr.isTTY ?? false) });
     const result = await runGetBatch(client, {
       roomId: client.roomId,
       home,
       into,
       prune,
       treePrefix: repopath,
-      targets: [repopath]
+      targets: [repopath],
+      onProgress: reporter.sink
     });
+    if (json) {
+      process.exitCode = result.hardError ? 2 : result.exitCode;
+      return;
+    }
     if (result.hardError) {
       const e = result.hardError;
       process.stderr.write(`fs get: [${e.error}]${e.detail ? " " + e.detail : ""}${e.hint ? " — " + e.hint : ""}
@@ -11544,7 +11865,8 @@ var FS_CMDS = {
     if (!doHydrate)
       return;
     const home = flag5(args2, "home");
-    const hydrateResult = await hydrateGrepWinners(client, result.results.map((r) => r.path), into, client.roomId, home);
+    const hydrateReporter = createReporter({ mode: resolveMode(false, process.stderr.isTTY ?? false) });
+    const hydrateResult = await hydrateGrepWinners(client, result.results.map((r) => r.path), into, client.roomId, home, hydrateReporter.sink);
     if (hydrateResult.hardError) {
       const e = hydrateResult.hardError;
       process.stderr.write(`fs grep --hydrate: [${e.error}]${e.detail ? " " + e.detail : ""}
@@ -11561,7 +11883,8 @@ var FS_CMDS = {
     const into = resolveWorkspaceRoot(flag5(args2, "into"), flag5(args2, "root"));
     const home = flag5(args2, "home");
     const prune = flagBool2(args2, "prune");
-    const result = await hydrateSubtree(client, prefix, into, client.roomId, home, prune);
+    const reporter = createReporter({ mode: resolveMode(false, process.stderr.isTTY ?? false) });
+    const result = await hydrateSubtree(client, prefix, into, client.roomId, home, prune, reporter.sink);
     if (result.hardError) {
       const e = result.hardError;
       process.stderr.write(`fs hydrate: [${e.error}]${e.detail ? " " + e.detail : ""}
@@ -11770,7 +12093,7 @@ async function cmdFs(args2) {
   const sub = args2.positional.shift();
   const handler = sub ? FS_CMDS[sub] : undefined;
   if (!handler) {
-    die5(`usage: mesh fs put <path> [--as <repopath>] [--strict] | ls [<prefix>] [-f] [--into <dir>] | get <repopath> [--into <dir>] [--prune] | rm <repopath> | edit <path> [--into <dir>] | lock <path> | unlock <path> | grep <query> [--prefix <path-prefix>] [--limit <n>] [--hydrate [--into <dir>]] | hydrate [<prefix>] [--into <dir>] [--prune] | grant <subject> <path> <grade> | grants | revoke <subject> <path> | role <participant> <role> | roles | role-rm <participant> <role> | leases | config <open|closed> | deps <path> | request <path> [--grade read] | status [<prefix>] [--deep] [--porcelain] [--root <dir>] | diff <path> [--base] [--root <dir>]
+    die5(`usage: mesh fs put <path> [--as <repopath>] [--strict] [--json] | ls [<prefix>] [-f] [--into <dir>] | get <repopath> [--into <dir>] [--prune] [--json] | rm <repopath> | edit <path> [--into <dir>] | lock <path> | unlock <path> | grep <query> [--prefix <path-prefix>] [--limit <n>] [--hydrate [--into <dir>]] | hydrate [<prefix>] [--into <dir>] [--prune] | grant <subject> <path> <grade> | grants | revoke <subject> <path> | role <participant> <role> | roles | role-rm <participant> <role> | leases | config <open|closed> | deps <path> | request <path> [--grade read] | status [<prefix>] [--deep] [--porcelain] [--root <dir>] | diff <path> [--base] [--root <dir>]
   write policy by extension: code (.ts .js .py .go .rs …) -> merge on \`put\` · prose (.md .txt) -> shared CRDT via \`edit\` · opt-in serialize: \`lock\`/\`unlock\`
   grades: discover < read < write < exclusive`);
   }
@@ -11999,9 +12322,9 @@ tasks:
 
 files:
   (workspace root = cwd by default, --root <dir> overrides, --into <dir> stays for one-off scratch staging; identity = normalizeId(path) relative to that root, same in the room tree)
-  fs put <path|dir> [--as <repopath>] [--all]               Upload a file, or a directory (recursive); .meshignore excludes, --all includes hidden files
+  fs put <path|dir> [--as <repopath>] [--all] [--json]      Upload a file or directory; .meshignore excludes, --all includes hidden files; --json streams NDJSON progress
   fs ls [<prefix>] [-f] [--into <dir>|--root <dir>]         List the shared workspace tree (-f: live view — tree, leases, hydration); local column compares against the workspace root
-  fs get <repopath|prefix> [--into <dir>|--root <dir>] [--prune]  Hydrate a file — or a whole subtree if given a directory prefix, into the workspace root (default: cwd); safe by default (never overwrites local-ahead/marker-bearing work, see fs status); --prune drops local copies the room cleanly deleted
+  fs get <repopath|prefix> [--into <dir>|--root <dir>] [--prune] [--json] Hydrate a file/subtree; --prune drops local copies the room cleanly deleted; --json streams NDJSON progress
   fs rm <repopath> [-r]                                     Delete a file (or a whole subtree with -r)
   fs edit <path> [--into <dir>|--root <dir>]                Subscribe + edit a live Yjs doc (Ctrl+C to exit)
   fs lock <path>                                            Acquire exclusive lease (file.lock)
@@ -12017,7 +12340,7 @@ files:
   fs roles                                                  List all role bindings in the room
   fs role-rm <participant> <role>                           Unbind a participant's file-plane role (owner only)
   fs leases                                                 List all active file leases
-  fs config <open|closed>                                   Set the room's default_access posture (owner only)
+  fs config <open|closed> | rate <spec>                     Set default_access posture, or the room rate limit (e.g. "30/min;burst=60") — owner only
   fs deps <path>                                            Walk a file's import closure; flag deps you can't read
   fs request <path> [--grade read]                          Post an advisory access request for a path
   fs status [<prefix>] [--deep] [--porcelain] [--root <dir>]  Awareness: per-file sync state vs the room (= in-sync ↑ ahead ↓ behind ⇅ diverged C markers \uD83D\uDD12 locked ? untracked ✝ room-deleted); --deep dry-runs a merge on diverged files; read-only, exit 0 always
@@ -12226,6 +12549,7 @@ export {
   statusScan,
   resolveFetchRef,
   resolveDeliverMode,
+  makeRateRetry,
   localSizes,
   isFilePlaneEntry,
   hydrateSubtree,

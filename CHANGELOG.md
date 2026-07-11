@@ -3,6 +3,35 @@
 All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.16.0] — 2026-07-11
+
+### Added
+
+- **Observable bulk `fs put`/`fs get`.** A preflight plan line (file counts — to-upload/
+  download, new/changed, unchanged, locked, skipped — plus an ETA for `put`), then a live
+  in-place progress line on a TTY (`⬆ n/N (p%) path`, with a self-correcting "~Xs left"
+  from observed throughput), all on stderr. Piped/CI output gets one plan line + one rate
+  notice instead of per-file spam.
+- **`--json` on `fs put`/`fs get`.** NDJSON to stdout, one object per event —
+  `{"type":"plan",...}`, `{"type":"file","n":..,"total":..,"path":..,"outcome":..}`,
+  `{"type":"ratelimit","waited_s":..}`, `{"type":"done","op":..,"total":..,"exit":..,
+  "elapsed_s":..}`. The CLI process *is* the job — an agent reads its own child's stdout
+  incrementally; no server-side job to poll. Human stdout lines are suppressed in `--json`
+  mode.
+- **`mesh fs config rate "<spec>"`** (owner-only) — retunes a *live* room's per-participant
+  `rate_limit`; the DO re-seeds its limiter immediately (in-flight token buckets reset by
+  design). Same live update available via `POST /config { rate_limit }`.
+
+### Changed
+
+- **Default room rate limit raised** to `30/min;burst=60` (was `12/min;burst=30`); the
+  claim/accept/reject 20% floor is unchanged.
+- The old per-wait `… rate-limited; waiting Ns` console spam is gone — folded into the
+  live TTY progress line, or a single notice on piped output.
+- `rate_limit` (genesis or live `system.config`) is now bounded: `1..600/min`,
+  `1..1000` burst — both a malformed spec and an out-of-range one are rejected
+  `400 invalid_submission`, enforced at both `POST /create` and `POST /config`.
+
 
 ## [1.15.0] — 2026-07-10
 

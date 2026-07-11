@@ -16088,6 +16088,9 @@ class MeshClient {
   async setDefaultAccess(access) {
     return this._postSeq("/config", { default_access: access });
   }
+  async setRateLimit(rateLimit) {
+    return this._postSeq("/config", { rate_limit: rateLimit });
+  }
   async revokeGrant(subject, path2) {
     return this._postSeq("/grants/revoke", { path_prefix: path2, subject });
   }

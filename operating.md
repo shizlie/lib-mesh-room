@@ -157,11 +157,47 @@ staging (`--into` wins if both are given).
 | `mesh fs role-rm <participant> <role>` | Unbind a participant's file-plane role (owner only; `404 unknown_role` if none matches) |
 | `mesh fs leases` | List all active file leases in the room |
 | `mesh fs config <open\|closed>` | Set the room's `default_access` posture (owner only) |
+| `mesh fs config rate "<spec>"` | Retune the room's per-participant `rate_limit` on a *live* room (owner only); e.g. `"30/min;burst=60"`; bounded to `1..600/min`, `1..1000` burst |
 | `mesh fs deps <path>` | Walk a file's transitive import closure; flag each dependency `[readable]`/`[unreadable]` |
 | `mesh fs request <path> [--grade read]` | Post an advisory `file.request` so the owner sees which files a scoped agent needs |
 
+Lowering a live room's `rate_limit` (`mesh fs config rate "<spec>"`) re-seeds the DO's
+`RateLimiter` and resets every participant's in-flight token bucket to the new burst, so
+it does not retroactively throttle a burst already in progress — the new limit takes full
+effect starting from the next refill, not mid-burst.
+
 Path identity is cross-OS safe: paths are normalised to lowercase, NFC Unicode, forward
 slashes, and Windows-reserved names are rejected at the proto layer.
+
+### Bulk `fs put`/`fs get` progress
+
+A multi-file `put`/`get` is observable, not silent. Three renderers off the same event
+stream (`mesh/packages/cli/src/progress.ts`):
+
+- **TTY (interactive):** a preflight plan line (files to move, new/changed/unchanged/
+  locked/skipped counts, an ETA for `put`), then a live in-place line —
+  `⬆ n/N (p%) path`, self-correcting "~Xs left" from *observed* per-file throughput
+  (which already folds in real rate-limit waits, unlike the static preflight estimate).
+  A rate-limit wait folds into the same line (`rate-limited, waited Ns`) instead of
+  printing anything new.
+- **Piped/CI (`plain`):** the preflight plan line, then at most one
+  `… rate-limited; throttling to the room's limit` notice for the whole run — no
+  per-file, per-wait spam.
+- **`--json`:** NDJSON to **stdout** (human lines go to stderr and are suppressed), one
+  object per line:
+  - `{"type":"plan","op":"put"|"get","label":..,"total":..,"upload":..,"new":..,"changed":..,"unchanged":..,"locked":..,"skipped":..,"eta_s":..}`
+  - `{"type":"file","n":..,"total":..,"path":..,"outcome":..}`
+  - `{"type":"ratelimit","waited_s":..}`
+  - `{"type":"done","op":..,"total":..,"act":..,"exit":..,"elapsed_s":..}`
+
+**Agent polling model.** There is no server-side job to poll — the `mesh fs put`/`fs get`
+**CLI process is the job**. An agent driving it directly reads the child's stdout; with
+`--json` each event streams as it happens, so no polling loop is needed. For a
+backgrounded push (e.g. launched from a daemon-woken agent that can't block), redirect
+`--json` to a file (`mesh fs put --dir big/ --json > progress.ndjson &`) and tail or poll
+that file — roughly a 30 s cadence is fine, since the file only grows. `mesh fs ls -f`
+remains the cross-participant live feed (tree + leases + hydration), independent of any
+one participant's own put/get run.
 
 ### `/tree` endpoint
 

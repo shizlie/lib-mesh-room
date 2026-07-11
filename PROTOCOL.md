@@ -268,7 +268,7 @@ The sender cannot sign `seq`/`prev_hash` (assigned after submission). Therefore:
     "owner": "harry@hcproduct",
     "owner_card": { …card… },
     "owner_next_commitment": "sha256:…",
-    "defaults": { "claim_window_s": 900, "lease_ttl_s": 1800, "rate_limit": "12/min;burst=30" }
+    "defaults": { "claim_window_s": 900, "lease_ttl_s": 1800, "rate_limit": "30/min;burst=60" }
   } }
 ```
 
@@ -336,7 +336,7 @@ Unknown performatives are **rejected** (`invalid_performative`), not ignored.
 | `system.*` | **room only** | — | `system.genesis`, `system.join`, `system.leave`, `system.roles` |
 | `system.grant` | **room only** | — | data: `{path_prefix, subject, access:"discover"\|"read"\|"write"\|"exclusive"}`; `subject` is a `participant_id` or `role:<name>` ref; owner-initiated via `POST /grants`; grants path-capability at the given access grade |
 | `system.role` | **room only** | — | data: `{participant, role, replaces?, depth?, active_from?, active_until?, override?}`; owner-initiated via `POST /roles`; binds a participant to a named role (bench `depth`, optional time-box `active_from`/`active_until` epoch ms, optional `override`); `replaces` swaps a role in ONE entry — binds the incoming holder and unbinds the outgoing holder in the same append (Intent G S-G1); a lapsed time-box excludes the binding from ACL resolution (`authorizePath`) but the row stays visible in `GET /roles`/`GET /v1/rooms/:room/state` reads; `active_from`/`active_until` must be finite numbers if provided — non-finite values (e.g. `Infinity` from JSON `1e400`, `NaN`) are rejected `400 invalid_submission` rather than silently stored as unbounded; card role is a label only (`specialties` in newer cards) and is NOT consulted in authz |
-| `system.config` | **room only** | — | data: `{default_access:"open"\|"closed"}`; owner-initiated via `POST /config`; sets the room's default-access posture (open = membership implies full access; closed = explicit grants required); flip is immediate — see R-E8 |
+| `system.config` | **room only** | — | data: `{default_access?:"open"\|"closed", rate_limit?:string}` (at least one field required); owner-initiated via `POST /config`; sets the room's default-access posture (open = membership implies full access; closed = explicit grants required — flip is immediate, see R-E8) and/or the room's per-participant `rate_limit` (§7); a live `rate_limit` update re-seeds the DO's `RateLimiter` on the next append (in-flight token buckets reset — intended, so a raise takes effect at once, not after the old window drains); `rate_limit` must parse as `"<rate>/min[;burst=<n>]"` and satisfy the §7 bounds, else `400 invalid_submission` (same code as genesis `defaults.rate_limit`, distinct message per failure mode) |
 | `system.lease_clear` | **room only** | — | data: `{path, holder, reason:"lease_expired"}`; room-authored on file-lease expiry (mirrors `escalate(lease_expired)` for the task plane); sequencer projection clears `file_lease` row + cancels the `filelease:<path>` timer — told-not-polled, no silent delete |
 | `system.revoke` | **room only** | — | data: exactly one of `{grant:{path_prefix, subject}}` \| `{role:{participant, role}}` (both/neither → `invalid_submission`); owner-initiated via `POST /grants/revoke` or `POST /roles/revoke`; sequencer pre-append CAS rejects a target that no longer exists (`unknown_grant`/`unknown_role`, surfaced as 404); projection deletes the matching `grants`/`role_bindings` row |
 | `system.decision_lapse` | **room only** | — | data: `{decision_id}`; `thread` REQUIRED (== `decision_id`); room-authored on decision deadline expiry (mirrors `escalate`/`system.lease_clear`'s timer-fired shape); sequencer projection flips `decisions.status` open→lapsed — idempotent, never executes a fallback |
@@ -430,10 +430,19 @@ Rules:
 
 ## 7. Rate limits (echo-storm control — a room primitive, not etiquette)
 
-- Per participant: token bucket, default `12 entries/min, burst 30` (genesis override).
+- Per participant: token bucket, default `30 entries/min, burst 60` (genesis override, or an
+  owner-set live update — see below).
 - Exceeded → `429 rate_limited` + `retry_after_s`. Room-authored entries are exempt.
 - Per-performative floor: `claim`/`accept`/`reject` are never starved by chatter —
-  reserved 20% of bucket.
+  reserved 20% of bucket. Bulk `file.write` (`fs put`/`fs get`) is ordinary chatter, not
+  floor-protected — a large bulk sync throttles like any other performative.
+- **Live re-seed (owner-only).** `system.config` (`POST /config`) may carry `rate_limit`
+  to retune a *running* room; see §3's `system.config` row for the exact shape and the
+  re-seed mechanics.
+- **Bounds.** `rate_limit` — genesis `defaults.rate_limit` or a live `system.config` update
+  — must satisfy `1 ≤ rate ≤ 600` per minute and `1 ≤ burst ≤ 1000`; both a malformed string
+  and an out-of-range value are rejected `400 invalid_submission` at `POST /create` and at
+  `POST /config` alike.
 
 ## 8. Wire API (room, v1)
 
@@ -461,7 +470,7 @@ Auth: `Authorization: Bearer <participant_token>` on everything except `/join` a
 
 ## 9. Errors
 
-`400 invalid_submission` (schema) · `400 invalid_performative` · `400 stale_client_ts` ·
+`400 invalid_submission` (schema; also a malformed or out-of-range `rate_limit`, §7) · `400 invalid_performative` · `400 stale_client_ts` ·
 `401 bad_token` · `401 bad_signature` · `401 bad_commitment` (`key.rotate`: `reveal_pubkey` does not hash to the sender's committed value) ·
 `403 not_authorized_verdict` · `403 role_required` · `403 id_retired` (sender's roster row carries a non-null `retired_seq`) ·
 `403 not_holder` (deliver/heartbeat from non-holder) · `403 not_authorized_settler` (decide.resolve from outside every currently-valid settler arm) · `404 unknown_task` ·
