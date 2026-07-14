@@ -3,6 +3,30 @@
 All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### Added
+
+- **Human room-view page (`GET /room/:room/:cred`).** A read-only, browser-facing
+  view over a room's shared file plane: identity header + an expand/collapse file
+  tree (name, size, last-modified, active-lease holder, per-file "no read"
+  marker). The Worker serves a static HTML shell; the page reads `{room, cred}`
+  from the path and calls the new `GET /v1/rooms/:room/view` data endpoint.
+- **`GET /v1/rooms/:room/view[?pubkey=&prefix=]` — dual-credential view data.** A
+  valid `Authorization: Bearer <token>` → **member view**: the caller's full
+  ACL-filtered tree (`content_hash` included). Otherwise `?pubkey=<pubkey>` →
+  **public view**: identity resolved from the roster, and the file tree is listed
+  only when the owner opted in (see `public_share`), at the room's public posture
+  with `content_hash` stripped (structure only — no sha256 leak). Unknown pubkey →
+  404; no credential → 401.
+- **`public_share` room config (default `false`).** Owner-set via `POST /config`
+  (additive; validated in `system.config`). The single switch that lets the
+  unauthenticated pubkey view list files — off by default, so `default_access:
+  "open"` never silently becomes world-readable. Owner toggles it with the new
+  `mesh fs config public-share <on|off>` verb (engine: `MeshClient.setPublicShare`).
+- **Homepage instructions.** The quick-start now documents opening the browser
+  file view (`/room/<room>/<token-or-pubkey>`) and enabling public sharing.
+
 ## [1.20.0] — 2026-07-12
 
 ### Added

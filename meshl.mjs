@@ -16371,6 +16371,9 @@ class MeshClient {
   async setArtifactMaxBytes(bytes) {
     return this._postSeq("/config", { artifact_max_bytes: bytes });
   }
+  async setPublicShare(enabled) {
+    return this._postSeq("/config", { public_share: enabled });
+  }
   async revokeGrant(subject, path2) {
     return this._postSeq("/grants/revoke", { path_prefix: path2, subject });
   }

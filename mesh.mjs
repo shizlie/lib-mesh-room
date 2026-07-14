@@ -1776,6 +1776,9 @@ class MeshClient {
   async setArtifactMaxBytes(bytes) {
     return this._postSeq("/config", { artifact_max_bytes: bytes });
   }
+  async setPublicShare(enabled) {
+    return this._postSeq("/config", { public_share: enabled });
+  }
   async revokeGrant(subject, path2) {
     return this._postSeq("/grants/revoke", { path_prefix: path2, subject });
   }
@@ -10733,6 +10736,16 @@ async function fsCmdConfig(client2, args2, _senderId) {
     ok2(`fs config: artifact_max_bytes → ${n} (seq=${r2.seq})`);
     return;
   }
+  if (first === "public-share") {
+    const value = args2.positional[1];
+    if (value !== "on" && value !== "off")
+      die2("fs config: public-share <on|off> is required");
+    const r2 = await client2.setPublicShare(value === "on");
+    if (!r2.ok)
+      die2(`fs config: [${r2.error}] ${r2.detail}${r2.hint ? " — " + r2.hint : ""}`);
+    ok2(`fs config: public_share → ${value} (seq=${r2.seq})`);
+    return;
+  }
   if (first === "write" || first === "discover") {
     const value = args2.positional[1];
     if (value !== "open" && value !== "closed")
@@ -13500,8 +13513,8 @@ files:
   fs roles                                                  List all role bindings in the room
   fs role-rm <participant> <role>                           Unbind a participant's file-plane role (owner only)
   fs leases                                                 List all active file leases
-  fs config <open|closed> | write <open|closed> | discover <open|closed> | rate <spec> | authority-source <card|bindings> | archive <n> | fts <bytes> | artifact <bytes>
-                                                             Set default_access posture, rate limit, verdict authority posture, entries-axis checkpoint threshold (Intent P, 0=off), FTS per-file size cap, or artifact size ceiling — owner only
+  fs config <open|closed> | write <open|closed> | discover <open|closed> | rate <spec> | authority-source <card|bindings> | archive <n> | fts <bytes> | artifact <bytes> | public-share <on|off>
+                                                             Set default_access posture, rate limit, verdict authority posture, entries-axis checkpoint threshold (Intent P, 0=off), FTS per-file size cap, artifact size ceiling, or public browser file-view sharing — owner only
   fs deps <path>                                            Walk a file's import closure; flag deps you can't read
   fs request <path> [--grade read]                          Post an advisory access request for a path
   fs status [<prefix>] [--deep] [--porcelain] [--root <dir>]  Awareness: per-file sync state vs the room (= in-sync ↑ ahead ↓ behind ⇅ diverged C markers \uD83D\uDD12 locked ? untracked ✝ room-deleted); --deep dry-runs a merge on diverged files; read-only, exit 0 always
