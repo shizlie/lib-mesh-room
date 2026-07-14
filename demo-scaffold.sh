@@ -234,12 +234,18 @@ heartbeat:
 state_dir: $LIVE/$name-state
 EOF
   if [ -z "$NO_AGENTS" ]; then
+    # mesh's MCP surface is deferred — the agent works through the `mesh` CLI ONLY (on its
+    # PATH via $LIVE/bin/mesh). Launch with an EMPTY strict MCP config so Claude Code
+    # registers NO mesh MCP server; in particular it won't inherit a global `mesh` server the
+    # host may have (which points at an unrelated daemon → daemon_not_running). The daemon
+    # (meshl run, below) is still what wakes the agent via tmux; the CLI talks to the room.
+    echo '{ "mcpServers": {} }' > "$LIVE/$name-mcp.json"
     cat > "$LIVE/launch-$name.sh" <<EOF
 #!/usr/bin/env bash
 export MESH_HOME="$home"
 export PATH="$AGENT_PATH"
 cd "$work"
-exec "$CLAUDE_BIN" --dangerously-skip-permissions
+exec "$CLAUDE_BIN" --strict-mcp-config --mcp-config "$LIVE/$name-mcp.json" --dangerously-skip-permissions
 EOF
     chmod +x "$LIVE/launch-$name.sh"
   fi
@@ -331,6 +337,7 @@ if [ -z "$NO_AGENTS" ]; then
   done
   sleep 3
   echo "Daemons running (logs: /tmp/mesh-{fixer,reviewer}-daemon.log)"
+  echo "  Watch the agents:  tmux attach -t $SESSION   (pane 2 = talk feed, pane 3 = live workspace)"
 fi
 
 # ── onboarding card ─────────────────────────────────────────────────────────────
@@ -341,33 +348,35 @@ cat <<EOF
   mesh shared-workspace demo is up.    Room: $ROOM_ID
   Room URL: $ROOM_URL      Invite: $INVITE      (share both to join from another machine)
 
-  The team shares ONE live workspace (the file plane) — seeded with a buggy
-  TODO backend: toggle() never un-completes a todo, so a test fails.
+  The team shares ONE live workspace — the FILE PLANE, "Dropbox for agents": one
+  live tree everyone reads and writes, seeded with a buggy TODO backend
+  (toggle() never un-completes a todo, so a test fails).
 
-  HOW FILES BEHAVE IN THE SHARED WORKSPACE  (write policy, by extension)
-    code   .ts .js .py .go .rs .java …  →  merge   concurrent edits 3-way
-                                            auto-merge; real overlaps come
-                                            back with <<<<<<< markers (never lost)
-    prose  .md .txt  (READMEs, plans)   →  shared  live CRDT: everyone's edits
-                                            to README.md merge in real time
-    serialize one file when needed      →  mesh fs lock <path>   (exclusive lease)
+  BYTE-ON-DEMAND  (metadata is free; bytes only when you ask)
+    MESH_HOME=$OWNER_HOME $MESH fs ls -f              # LIVE tree: paths, sizes, last editor, leases — NO bytes fetched
+    MESH_HOME=$OWNER_HOME $MESH fs grep "done = true" # server-side content search — still no local copy
+    MESH_HOME=$OWNER_HOME $MESH fs get src/todos.ts   # NOW pull one file's bytes (hydrate on demand)
 
-  INSPECT THE WORKSPACE  (any participant, any machine — no copy, no tarball)
-    MESH_HOME=$OWNER_HOME $MESH fs ls -f                  # LIVE view: tree · leases · hydration
-    MESH_HOME=$OWNER_HOME $MESH fs grep "done = true"     # find the bug, server-side
-    MESH_HOME=$OWNER_HOME $MESH fs get src/todos.ts       # pull just that file (bytes on demand)
+  STALE vs TIP  (know where you stand before you write)
+    MESH_HOME=$OWNER_HOME $MESH fs status             # per-file: = in-sync · ↓ behind (room moved on) · ↑ ahead · ⇅ diverged · 🔒 locked
+    MESH_HOME=$OWNER_HOME $MESH fs status --deep      # dry-run the merge on ⇅ diverged files — see the outcome before you put
+    MESH_HOME=$OWNER_HOME $MESH fs diff src/todos.ts  # your copy vs the room tip (read-only)
+
+  CONFLICT RESOLUTION IS BY FILE TYPE  (the room applies the right policy per extension)
+    code  .ts .js .py .go .rs …  →  merge      concurrent edits 3-way auto-merge on 'fs put';
+                                                a real overlap returns <<<<<<< markers, never silently lost
+    prose .md .txt (READMEs)     →  shared      live CRDT via 'fs edit' — everyone's edits merge in real time
+    any path, when you must      →  exclusive   'mesh fs lock <path>' — a serialized lease; others see 🔒 in 'fs status'
 
   KICK IT OFF  (one human sentence — the whole demo)
     $ANNOUNCE_CMD
 
-  Then: fixer wakes → reads the shared workspace → fixes src/todos.ts → puts it
-  back (reviewer sees it LIVE) → delivers.  reviewer inspects via 'mesh fs get'
-  + 'bun test' → accepts.  Eyeball both planes live: 'mesh log -f' (talk) and
-  'mesh fs ls -f' (share — tree, leases, hydration).
+  Then: fixer wakes on 'announce' → fs grep/get to read → fixes src/todos.ts →
+  'fs put' (3-way merge; reviewer sees it LIVE) → delivers. reviewer wakes on
+  'deliver' → fs get + bun test → accepts. Watch both planes: 'mesh log -f'
+  (TALK) and 'mesh fs ls -f' (SHARE).
 EOF
-if [ -z "$NO_AGENTS" ]; then
-  echo "  Watch the agents:  tmux attach -t $SESSION   (pane 2 = talk feed, pane 3 = live workspace)"
-else
+if [ -n "$NO_AGENTS" ]; then
   cat <<EOF
   (--no-agents) Drive the teammates by hand from their homes:
     fixer:     MESH_HOME=$LIVE/fixer    $MESH ...   (claim fix-toggle, fs get/put, deliver)
