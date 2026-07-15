@@ -355,20 +355,20 @@ cat <<EOF
   Room URL: $ROOM_URL      Invite: $INVITE      (share both to join from another machine)
 
   THE FILE PLANE — "Dropbox for agents". The room holds the canonical copy of the
-  files; each participant works in its OWN folder and mesh syncs it to/from the room.
-  Files hydrate IN PLACE in a normal folder — no shadow dir.
+  files; a workspace folder syncs to/from it (workspace root = your cwd). Files
+  hydrate IN PLACE in a normal folder — no shadow dir.
     owner (you): $OWNER_FS   ← real local copy, already IN SYNC with the room
     fixer:       $LIVE/fixer-work        ← its own endpoint (starts empty, hydrates on demand)
     reviewer:    $LIVE/reviewer-work     ← its own endpoint
 
-  ONE MACHINE == MANY MACHINES. To mesh, a participant is (identity + its own folder).
-  Two agents in two folders on THIS machine are treated exactly like two agents on two
-  machines — Demo 3 is literally the same commands. Separate folders (not one shared
-  folder) on purpose: sharing a folder bypasses the room and loses what it gives you —
+  In a REAL project on one machine, agents can simply share your project folder —
+  the room still gives the task feed, wakes, leases, the signed log, and merge/
+  stale-write protection on every put. The demo gives each agent its OWN folder to
+  make the sync loop VISIBLE ('↓ behind' → fs get → '=') and to rehearse Demo 3:
+  a second folder behaves exactly like a second machine. What the room adds either way:
     • byte distribution: each endpoint gets its own copy, hydrated on demand (fs get).
     • write coordination: merge-on-write (3-way for code), stale-write protection,
-      exclusive leases, prose CRDT, no silent loss. A raw shared folder gives NONE of
-      this — and it matters on one machine too.
+      exclusive leases, prose CRDT, no silent loss — a plain folder gives none of this.
 
   SEE IT — from the owner's folder (cd first; workspace root = your cwd):
     cd $OWNER_FS
