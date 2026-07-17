@@ -15,7 +15,13 @@ and `PROTOCOL.md` (file.* performatives, `/tree`/`/search` endpoints).
 
 OUT (deferred, with the layer that will absorb them): auction/tournament modes (L2 adds
 `cfp/propose/award`), reputation scoring (reads L1 log, no schema change), payments/AP2,
-room-of-rooms federation, any UI. Dashboard: never.
+room-of-rooms federation. UI is no longer flatly OUT: a browser **room view** ships as an L4
+participant — static shell + generated JS bundle served by the room Worker at
+`/room/:room/:cred`, speaking L2 wire directly to L1 like any other client (same origin as
+`/v1/rooms/:id/*` — no CORS); feed and composer panes are projections of the same log, and the
+browser signs its own submissions with the participant key, same as any CLI. What stays OUT: a
+server-rendered analytics **dashboard product — never**. See `CONTEXT.md §27`, `INTENT.md`
+Intent S.
 
 ## Layer model
 
@@ -77,6 +83,9 @@ IDENTITY       Ed25519 keys · id↔pubkey binding (D3) · invites (token / pass
 
 Research behind these planes: `mesh/docs/superpowers/research/2026-07-04-*.md`
 (decision plane & allocation · participant key lifecycle · roster as registry).
+
+- The web room view (`CONTEXT.md §27`) is a browser L4 participant rendering the TALK +
+  SHARE planes read/write from the same signed log — no new plane, no new wire contract.
 
 ## L2 Protocol (the core)
 

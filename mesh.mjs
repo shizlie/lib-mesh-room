@@ -1280,6 +1280,9 @@ var ROOM_ONLY = {
   "system.checkpoint": true
 };
 var PARTICIPANT_PERFORMATIVES = Object.keys(PERFORMATIVE_SET).filter((p) => !(p in ROOM_ONLY));
+var COLLAB_LANE_EXCLUDE = ["file.*", "system.*"];
+// ../proto/src/composer.ts
+var GRADES = Object.keys(GRADE_ORDER);
 // ../proto/src/machine.ts
 var MAX_DURATION_S = 30 * 24 * 60 * 60;
 // ../proto/src/decisions.ts
@@ -11406,6 +11409,83 @@ async function cmdBrief(args2) {
   ok5(ownerAuthorityPostureWarning(state, identity.id) + renderBrief(input));
 }
 
+// src/open.ts
+import { spawn as spawn2 } from "node:child_process";
+function flag5(args2, name) {
+  const v = args2.flags[name];
+  return typeof v === "string" ? v : undefined;
+}
+function flagBool3(args2, name) {
+  return args2.flags[name] !== undefined;
+}
+function die5(msg) {
+  process.stderr.write(msg + `
+`);
+  process.exit(1);
+}
+function ok6(msg) {
+  process.stdout.write(msg + `
+`);
+}
+var ROOM_URL_SUFFIX = /\/v1\/rooms\/[^/]+\/?$/;
+function buildOpenUrl(entry, secretBytes, readOnly) {
+  const match = ROOM_URL_SUFFIX.exec(entry.url);
+  if (!match)
+    die5(`open: room url "${entry.url}" is not a ".../v1/rooms/<id>" url`);
+  const origin = entry.url.slice(0, match.index);
+  const roomId = entry.url.replace(/\/$/, "").split("/").pop();
+  const base = `${origin}/room/${encodeURIComponent(roomId)}/${encodeURIComponent(entry.token)}`;
+  if (readOnly || secretBytes === null)
+    return base;
+  return `${base}#k=${Buffer.from(secretBytes).toString("base64url")}`;
+}
+function defaultSpawnOpener(command, args2, onError) {
+  const child = spawn2(command, args2, { detached: true, stdio: "ignore" });
+  child.on("error", onError);
+  child.unref();
+}
+function openerFor(url) {
+  if (process.platform === "darwin")
+    return { command: "open", args: [url] };
+  if (process.platform === "win32")
+    return { command: "cmd", args: ["/c", "start", "", url] };
+  return { command: "xdg-open", args: [url] };
+}
+async function cmdOpen(args2, spawnOpener) {
+  const home = flag5(args2, "home");
+  const roomArg = flag5(args2, "room");
+  const readOnly = flagBool3(args2, "read-only");
+  const printOnly = flagBool3(args2, "print");
+  const { entry: room } = resolveRoom(roomArg, home);
+  let secretBytes = null;
+  if (!readOnly) {
+    const identity = loadIdentityWithSecret(home);
+    if (!identity)
+      die5('No identity. Run "mesh keygen" first.');
+    if (room.participant_id === undefined) {
+      die5("open: this room entry predates participant tracking — re-run `mesh room join` to refresh it, or use --read-only");
+    }
+    if (room.participant_id !== identity.id) {
+      die5(`open: local identity "${identity.id}" does not match this room's joined participant "${room.participant_id}" — use --read-only, or switch identity/profile`);
+    }
+    secretBytes = identity.secretBytes;
+  }
+  const url = buildOpenUrl(room, secretBytes, readOnly);
+  if (printOnly) {
+    ok6(url);
+    return;
+  }
+  const { command, args: openerArgs } = openerFor(url);
+  const spawner = spawnOpener ?? ((cmd, a) => defaultSpawnOpener(cmd, a, () => {
+    process.stderr.write(`open: could not launch a browser (${command} not available) — run \`mesh open --print\` and paste the URL manually
+`);
+  }));
+  spawner(command, openerArgs);
+  const displayUrl = url.split("#")[0].replace(/\/[^/]+$/, "/…");
+  const label = readOnly ? "read-only link" : "write link — keep it private";
+  ok6(`opened ${displayUrl} (${label})`);
+}
+
 // src/flags.ts
 function parseArgs(argv, arity) {
   const positional = [];
@@ -11485,6 +11565,7 @@ var COMMAND_SPEC = {
   "room log": { flags: ["f", "all"], max: 0, names: [] },
   log: { flags: ["f", "all"], max: 0, names: [] },
   chat: { flags: [], max: 0, names: [] },
+  open: { flags: ["read-only", "print"], max: 0, names: [] },
   post: { flags: ["body", "thread"], max: 1, names: ["body"] },
   announce: { flags: ["body", "verdict-by", "claim-window-s", "lease-ttl-s", "max-claim-s", "depends-on"], max: 1, names: ["task_ref"] },
   claim: { flags: ["body", "artifact"], max: 1, names: ["task_ref"] },
@@ -11566,6 +11647,8 @@ var FLAG_ARITY = {
   all: "boolean",
   body: "value",
   thread: "value",
+  "read-only": "boolean",
+  print: "boolean",
   "verdict-by": "value",
   "claim-window-s": "value",
   "lease-ttl-s": "value",
@@ -11662,20 +11745,20 @@ function validatePositionals(specKey, args2) {
   const takes = spec.max === 0 ? "takes no arguments" : `takes at most ${spec.max} (${spec.names.join(" ")})`;
   return `${specKey}: unexpected argument "${first}" — ${takes}. Run: mesh ${specKey} --help`;
 }
-function flag5(args2, name) {
+function flag6(args2, name) {
   const v = args2.flags[name];
   return typeof v === "string" ? v : undefined;
 }
-function flagBool3(args2, name) {
+function flagBool4(args2, name) {
   return args2.flags[name] !== undefined;
 }
 function requiredFlag(args2, name, cmd) {
-  const v = flag5(args2, name);
+  const v = flag6(args2, name);
   if (!v)
-    die5(`${cmd}: --${name} is required`);
+    die6(`${cmd}: --${name} is required`);
   return v;
 }
-function die5(msg) {
+function die6(msg) {
   process.stderr.write(msg + `
 `);
   process.exit(1);
@@ -11687,7 +11770,7 @@ import { dirname as dirname6, resolve as resolve3 } from "node:path";
 import { fileURLToPath } from "node:url";
 function getVersion() {
   if (true)
-    return "1.25.0";
+    return "1.26.0";
   try {
     const here = dirname6(fileURLToPath(import.meta.url));
     return readFileSync7(resolve3(here, "../../../VERSION"), "utf8").trim();
@@ -11697,7 +11780,7 @@ function getVersion() {
 }
 
 // src/main.ts
-function ok6(msg) {
+function ok7(msg) {
   process.stdout.write(msg + `
 `);
 }
@@ -11720,7 +11803,7 @@ async function hydrateGrepWinners(client2, paths, into, roomId, home, onProgress
   for (const row of result.rows) {
     const line = formatGetRowMessage(row.repoPath, row.outcome);
     if (line)
-      ok6(line);
+      ok7(line);
   }
   return result;
 }
@@ -11729,7 +11812,7 @@ async function hydrateSubtree(client2, prefix, into, roomId, home, prune = false
   for (const row of result.rows) {
     const line = formatGetRowMessage(row.repoPath, row.outcome);
     if (line)
-      ok6(line);
+      ok7(line);
   }
   return result;
 }
@@ -11750,40 +11833,40 @@ function openDecisionsCount(state, selfId) {
   return decisionsAwaitingAuthority(state.decisions, selfId, myRoles(state.bindings, selfId)).length;
 }
 async function cmdKeygen(args2) {
-  let id2 = flag5(args2, "id");
+  let id2 = flag6(args2, "id");
   if (!id2) {
     if (process.stdin.isTTY) {
       id2 = await promptLine("identity id");
       if (!id2)
-        die5("keygen: identity id cannot be empty");
+        die6("keygen: identity id cannot be empty");
     } else {
-      die5("keygen: --id <id> is required");
+      die6("keygen: --id <id> is required");
     }
   }
-  const home = flag5(args2, "home");
+  const home = flag6(args2, "home");
   const homeDir = home ?? meshHome();
   const existing = loadIdentity(home);
-  if (existing && !flagBool3(args2, "force")) {
-    die5(`Identity "${existing.id}" already exists at ${homeDir} (pubkey ${existing.pubkey}).
+  if (existing && !flagBool4(args2, "force")) {
+    die6(`Identity "${existing.id}" already exists at ${homeDir} (pubkey ${existing.pubkey}).
 ` + `Use --force to overwrite — but note this MINTS A NEW KEYPAIR: rooms that bound the old
 ` + `key will reject you with id_taken. To act as a different participant, use a separate MESH_HOME.`);
   }
-  const roles = (flag5(args2, "roles") ?? "").split(",").map((r) => r.trim()).filter(Boolean);
+  const roles = (flag6(args2, "roles") ?? "").split(",").map((r) => r.trim()).filter(Boolean);
   const identity = createIdentity(id2, home, roles);
-  ok6(`Created identity: ${identity.id}`);
-  ok6(`  home:   ${homeDir}`);
-  ok6(`  pubkey: ${identity.pubkey}`);
+  ok7(`Created identity: ${identity.id}`);
+  ok7(`  home:   ${homeDir}`);
+  ok7(`  pubkey: ${identity.pubkey}`);
   if (roles.length > 0)
-    ok6(`  roles:  ${roles.join(", ")}  (asserted in the card at join → verdict authority for these role refs)`);
-  ok6(`To reuse this id elsewhere, COPY ${homeDir}/identity.json — never re-run keygen (that makes a new key).`);
+    ok7(`  roles:  ${roles.join(", ")}  (asserted in the card at join → verdict authority for these role refs)`);
+  ok7(`To reuse this id elsewhere, COPY ${homeDir}/identity.json — never re-run keygen (that makes a new key).`);
 }
 async function cmdKeyRotate(args2) {
-  const home = flag5(args2, "home");
-  const roomArg = flag5(args2, "room");
+  const home = flag6(args2, "home");
+  const roomArg = flag6(args2, "room");
   const { roomId, entry: room } = resolveRoom(roomArg, home);
   const identity = loadIdentity(home);
   if (!identity)
-    die5('No identity. Run "mesh keygen" first.');
+    die6('No identity. Run "mesh keygen" first.');
   const { identity: rotated, data } = rotateIdentityFile(identity);
   const secretBytes = new Uint8Array(Buffer.from(identity.secret, "base64"));
   const client2 = new MeshClient({
@@ -11795,19 +11878,19 @@ async function cmdKeyRotate(args2) {
   });
   const result = await client2.postEntry({ performative: "key.rotate", data });
   if (!result.ok)
-    die5(`key rotate failed: [${result.error}] ${result.detail}${result.hint ? " — " + result.hint : ""}`);
+    die6(`key rotate failed: [${result.error}] ${result.detail}${result.hint ? " — " + result.hint : ""}`);
   persistOrExplain(rotated, home);
-  ok6(`Rotated key for ${identity.id} (seq=${result.seq}). New pubkey: ${rotated.pubkey}`);
+  ok7(`Rotated key for ${identity.id} (seq=${result.seq}). New pubkey: ${rotated.pubkey}`);
 }
 async function cmdKeyRetire(args2) {
-  const home = flag5(args2, "home");
-  const roomArg = flag5(args2, "room");
+  const home = flag6(args2, "home");
+  const roomArg = flag6(args2, "room");
   const { roomId, entry: room } = resolveRoom(roomArg, home);
   const identity = loadIdentity(home);
   if (!identity)
-    die5('No identity. Run "mesh keygen" first.');
+    die6('No identity. Run "mesh keygen" first.');
   if (!identity.next_pubkey) {
-    die5(`key retire: ${identity.id} has no committed next key yet — run "mesh key rotate" once first (bootstrap), then retire.`);
+    die6(`key retire: ${identity.id} has no committed next key yet — run "mesh key rotate" once first (bootstrap), then retire.`);
   }
   const secretBytes = new Uint8Array(Buffer.from(identity.secret, "base64"));
   const client2 = new MeshClient({
@@ -11822,8 +11905,8 @@ async function cmdKeyRetire(args2) {
     data: { reveal_pubkey: identity.next_pubkey, tombstone: true }
   });
   if (!result.ok)
-    die5(`key retire failed: [${result.error}] ${result.detail}${result.hint ? " — " + result.hint : ""}`);
-  ok6(`Retired ${identity.id} (seq=${result.seq}). This identity may no longer author entries in ${roomId}.`);
+    die6(`key retire failed: [${result.error}] ${result.detail}${result.hint ? " — " + result.hint : ""}`);
+  ok7(`Retired ${identity.id} (seq=${result.seq}). This identity may no longer author entries in ${roomId}.`);
 }
 async function cmdKey(args2) {
   const sub = args2.positional.shift();
@@ -11833,70 +11916,71 @@ async function cmdKey(args2) {
     case "retire":
       return cmdKeyRetire(args2);
     default:
-      die5(`key: unknown action "${sub ?? ""}". Use: mesh key rotate|retire`);
+      die6(`key: unknown action "${sub ?? ""}". Use: mesh key rotate|retire`);
   }
 }
 async function cmdCreateRoom(args2) {
-  const home = flag5(args2, "home");
+  const home = flag6(args2, "home");
   let roomId = args2.positional[0];
   if (!roomId) {
     if (process.stdin.isTTY) {
       roomId = await promptLine("room id");
       if (!roomId)
-        die5("create-room: room id cannot be empty");
+        die6("create-room: room id cannot be empty");
     } else {
-      die5("create-room: <room_id> positional argument is required");
+      die6("create-room: <room_id> positional argument is required");
     }
   }
-  let ownerId = flag5(args2, "owner");
+  let ownerId = flag6(args2, "owner");
   if (!ownerId) {
     if (process.stdin.isTTY) {
       ownerId = await promptLine("owner id");
       if (!ownerId)
-        die5("create-room: owner id cannot be empty");
+        die6("create-room: owner id cannot be empty");
     } else {
-      die5("create-room: --owner <id> is required");
+      die6("create-room: --owner <id> is required");
     }
   }
-  const workerUrl = resolveRoomUrl(flag5(args2, "url"), home);
+  const workerUrl = resolveRoomUrl(flag6(args2, "url"), home);
   const identity = loadIdentityWithSecret(home);
   if (!identity)
-    die5(`No identity found. Run "mesh keygen --id ${ownerId}" first.`);
+    die6(`No identity found. Run "mesh keygen --id ${ownerId}" first.`);
   if (identity.id !== ownerId)
-    die5(`Identity id "${identity.id}" does not match --owner "${ownerId}"`);
-  const card = buildCard(identity.id, identity.pubkey, identity.secretBytes, { roles: identity.roles, host: flag5(args2, "host") ?? os3.hostname() });
+    die6(`Identity id "${identity.id}" does not match --owner "${ownerId}"`);
+  const card = buildCard(identity.id, identity.pubkey, identity.secretBytes, { roles: identity.roles, host: flag6(args2, "host") ?? os3.hostname() });
   const joinSecret = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("hex");
   const nextPubkey = identity.next_pubkey ?? ensureNextKey(loadIdentity(home), home).next_pubkey;
   const nextCommitment = keyCommitment(nextPubkey);
   const result = await createRoom(workerUrl, roomId, card, joinSecret, undefined, nextCommitment);
   if (!result.ok)
-    die5(`create-room failed: [${result.error}] ${result.detail}${result.hint ? " — " + result.hint : ""}`);
-  const joined = await joinRoom(result.room_url, roomId, joinSecret, card, identity.secretBytes, nextCommitment);
+    die6(`create-room failed: [${result.error}] ${result.detail}${result.hint ? " — " + result.hint : ""}`);
+  const roomUrl = `${workerUrl.replace(/\/+$/, "")}/v1/rooms/${encodeURIComponent(roomId)}`;
+  const joined = await joinRoom(roomUrl, roomId, joinSecret, card, identity.secretBytes, nextCommitment);
   if (!joined.ok) {
-    die5(`create-room: room created but owner auto-join failed: [${joined.error}] ${joined.detail}${joined.hint ? " — " + joined.hint : ""}`);
+    die6(`create-room: room created but owner auto-join failed: [${joined.error}] ${joined.detail}${joined.hint ? " — " + joined.hint : ""}`);
   }
-  upsertRoom(roomId, { url: result.room_url, token: joined.token, participant_id: joined.participant_id, join_secret: joinSecret }, home);
+  upsertRoom(roomId, { url: roomUrl, token: joined.token, participant_id: joined.participant_id, join_secret: joinSecret }, home);
   setActiveRoom(roomId, home);
   saveConfig({ defaultRoomUrl: workerUrl }, home);
-  ok6(`Room created: ${result.room_url}`);
-  ok6(`Joined as owner: ${joined.participant_id}`);
-  ok6(`Invite:       ${result.invite}`);
-  ok6(`Room pubkey:  ${result.room_pubkey}`);
-  ok6(`
+  ok7(`Room created: ${roomUrl}`);
+  ok7(`Joined as owner: ${joined.participant_id}`);
+  ok7(`Invite:       ${result.invite}`);
+  ok7(`Room pubkey:  ${result.room_pubkey}`);
+  ok7(`
 Share the invite with participants. They run:
-  mesh room join ${result.room_url} ${result.invite}`);
+  mesh room join ${roomUrl} ${result.invite}`);
 }
 async function cmdInit(args2) {
   if (!process.stdin.isTTY)
-    die5("mesh init: requires an interactive terminal (stdin must be a TTY)");
-  ok6(`Welcome to mesh! Let's get you set up.
+    die6("mesh init: requires an interactive terminal (stdin must be a TTY)");
+  ok7(`Welcome to mesh! Let's get you set up.
 `);
   const profile = await promptLine("Profile name", "default");
   setActiveProfile(profile);
   const profileHome = resolveProfileHome(profile);
   const id2 = await promptLine("Identity id");
   if (!id2)
-    die5("init: identity id cannot be empty");
+    die6("init: identity id cannot be empty");
   const existingUrl = resolveRoomUrl(undefined, profileHome);
   const url = await promptLine("Room server URL", existingUrl);
   saveConfig({ defaultRoomUrl: url }, profileHome);
@@ -11904,26 +11988,26 @@ async function cmdInit(args2) {
   if (action === "create") {
     const roomId = await promptLine("Room id");
     if (!roomId)
-      die5("init: room id cannot be empty");
+      die6("init: room id cannot be empty");
     if (!loadIdentity(profileHome)) {
-      ok6(`
+      ok7(`
 Creating identity "${id2}"…`);
       await cmdKeygen({ positional: [], flags: { id: id2, home: profileHome } });
     }
-    ok6(`
+    ok7(`
 Creating room…`);
     await cmdCreateRoom({ positional: [roomId], flags: { owner: id2, url, home: profileHome } });
   } else {
     const roomUrl = await promptLine("Room URL (from the invite)");
     const secret = await promptLine("Invite secret");
     if (!roomUrl || !secret)
-      die5("init: room URL and invite secret are required to join");
+      die6("init: room URL and invite secret are required to join");
     if (!loadIdentity(profileHome)) {
-      ok6(`
+      ok7(`
 Creating identity "${id2}"…`);
       await cmdKeygen({ positional: [], flags: { id: id2, home: profileHome } });
     }
-    ok6(`
+    ok7(`
 Joining room…`);
     await cmdJoin({ positional: [roomUrl, secret], flags: { home: profileHome } });
   }
@@ -11955,11 +12039,11 @@ var JOIN_NEXT_STEPS = [
 async function cmdJoin(args2) {
   const roomUrl = args2.positional[0];
   const inviteStr = args2.positional[1];
-  const passphrase = flag5(args2, "passphrase");
+  const passphrase = flag6(args2, "passphrase");
   if (!roomUrl || !inviteStr) {
-    die5("join: usage: mesh join <room-url> <room>.<secret>   or   mesh join <room-url> <room> --passphrase <phrase>");
+    die6("join: usage: mesh join <room-url> <room>.<secret>   or   mesh join <room-url> <room> --passphrase <phrase>");
   }
-  const home = flag5(args2, "home");
+  const home = flag6(args2, "home");
   let roomId;
   let joinSecret;
   if (passphrase !== undefined) {
@@ -11967,30 +12051,30 @@ async function cmdJoin(args2) {
   } else {
     const parts = inviteStr.split(".");
     if (parts.length < 2)
-      die5("join: invite must be in format <room_id>.<join_secret> (or pass --passphrase <phrase> with a bare room id)");
+      die6("join: invite must be in format <room_id>.<join_secret> (or pass --passphrase <phrase> with a bare room id)");
     joinSecret = parts[parts.length - 1];
     roomId = parts.slice(0, -1).join(".");
   }
   const identity = loadIdentityWithSecret(home);
   if (!identity)
-    die5('No identity found. Run "mesh keygen --id <id>" first.');
-  const card = buildCard(identity.id, identity.pubkey, identity.secretBytes, { roles: identity.roles, host: flag5(args2, "host") ?? os3.hostname() });
+    die6('No identity found. Run "mesh keygen --id <id>" first.');
+  const card = buildCard(identity.id, identity.pubkey, identity.secretBytes, { roles: identity.roles, host: flag6(args2, "host") ?? os3.hostname() });
   const nextPubkey = identity.next_pubkey ?? ensureNextKey(loadIdentity(home), home).next_pubkey;
   const nextCommitment = keyCommitment(nextPubkey);
   const result = passphrase !== undefined ? await joinRoomWithPassphrase(roomUrl, roomId, passphrase, card, identity.secretBytes, nextCommitment) : await joinRoom(roomUrl, roomId, joinSecret, card, identity.secretBytes, nextCommitment);
   if (!result.ok) {
     if (result.error === "id_taken")
-      die5(idTakenHelp(roomId, identity.id, identity.pubkey, home ?? meshHome()));
-    die5(`join failed: [${result.error}] ${result.detail}${result.hint ? " — " + result.hint : ""}`);
+      die6(idTakenHelp(roomId, identity.id, identity.pubkey, home ?? meshHome()));
+    die6(`join failed: [${result.error}] ${result.detail}${result.hint ? " — " + result.hint : ""}`);
   }
   upsertRoom(roomId, { url: roomUrl, token: result.token, participant_id: result.participant_id }, home);
   setActiveRoom(roomId, home);
-  ok6(`Joined ${roomId} as ${result.participant_id}`);
-  ok6(`Head: seq=${result.head.seq} ${result.head.entry_hash}`);
-  ok6("");
-  ok6("next steps:");
+  ok7(`Joined ${roomId} as ${result.participant_id}`);
+  ok7(`Head: seq=${result.head.seq} ${result.head.entry_hash}`);
+  ok7("");
+  ok7("next steps:");
   for (const cmd of JOIN_NEXT_STEPS)
-    ok6(`  ${cmd}`);
+    ok7(`  ${cmd}`);
 }
 async function cmdRoom(args2) {
   const sub = args2.positional.shift();
@@ -12012,45 +12096,45 @@ async function cmdRoom(args2) {
     case "invite":
       return cmdRoomInvite(args2);
     default:
-      die5(`room: unknown action "${sub ?? ""}". Use: mesh room create|join|list|rm|delete|invite|log`);
+      die6(`room: unknown action "${sub ?? ""}". Use: mesh room create|join|list|rm|delete|invite|log`);
   }
 }
 async function cmdRoomList(args2) {
-  const home = flag5(args2, "home");
+  const home = flag6(args2, "home");
   const rooms = loadRooms(home);
   const ids = Object.keys(rooms);
   if (ids.length === 0) {
-    ok6('No rooms joined. Run "mesh room join" first.');
+    ok7('No rooms joined. Run "mesh room join" first.');
     return;
   }
   const active = getActiveRoom(home);
-  ok6(`Joined rooms (${ids.length})${active ? `, active: ${active}` : ""}:`);
+  ok7(`Joined rooms (${ids.length})${active ? `, active: ${active}` : ""}:`);
   for (const id2 of ids) {
     const r = rooms[id2];
     const mark = id2 === active ? "*" : " ";
-    ok6(`${mark} ${id2}  —  as ${r.participant_id}  —  ${r.url}`);
+    ok7(`${mark} ${id2}  —  as ${r.participant_id}  —  ${r.url}`);
   }
 }
 async function cmdRoomRm(args2) {
   const roomId = args2.positional[0];
   if (!roomId)
-    die5("room rm: <room_id> is required");
-  const home = flag5(args2, "home");
+    die6("room rm: <room_id> is required");
+  const home = flag6(args2, "home");
   if (!removeRoom(roomId, home))
-    die5(`room rm: "${roomId}" not in rooms.json`);
-  ok6(`Forgot room ${roomId} locally (rooms.json). This does not delete the room on the server.`);
+    die6(`room rm: "${roomId}" not in rooms.json`);
+  ok7(`Forgot room ${roomId} locally (rooms.json). This does not delete the room on the server.`);
 }
 async function cmdRoomDelete(args2) {
   const roomId = args2.positional[0];
   if (!roomId)
-    die5("room delete: <room_id> is required");
-  const home = flag5(args2, "home");
+    die6("room delete: <room_id> is required");
+  const home = flag6(args2, "home");
   const room = loadRooms(home)[roomId];
   if (!room)
-    die5(`room delete: not joined to "${roomId}" locally — need its url + token to authorize. Run from the owner's MESH_HOME.`);
+    die6(`room delete: not joined to "${roomId}" locally — need its url + token to authorize. Run from the owner's MESH_HOME.`);
   const identity = loadIdentityWithSecret(home);
   if (!identity)
-    die5('No identity. Run "mesh keygen" first.');
+    die6('No identity. Run "mesh keygen" first.');
   const client2 = new MeshClient({
     roomUrl: room.url,
     token: room.token,
@@ -12061,11 +12145,11 @@ async function cmdRoomDelete(args2) {
   const result = await client2.deleteRoom();
   if (!result.ok) {
     if (result.status === 403)
-      die5(`room delete: only the room owner may delete "${roomId}" — run this from the owner's MESH_HOME.`);
-    die5(`room delete failed: ${result.error} (HTTP ${result.status})`);
+      die6(`room delete: only the room owner may delete "${roomId}" — run this from the owner's MESH_HOME.`);
+    die6(`room delete failed: ${result.error} (HTTP ${result.status})`);
   }
   removeRoom(roomId, home);
-  ok6(`Deleted room "${roomId}" on the server and forgot it locally. Re-create the id to reuse it.`);
+  ok7(`Deleted room "${roomId}" on the server and forgot it locally. Re-create the id to reuse it.`);
 }
 function extractInviteSecret(invite, roomId) {
   return invite.startsWith(roomId + ".") ? invite.slice(roomId.length + 1) : invite;
@@ -12210,24 +12294,24 @@ function generatePassphrase() {
 }
 async function cmdRoomInvite(args2) {
   const roomId = args2.positional[0];
-  const home = flag5(args2, "home");
-  const showFlag = flagBool3(args2, "show");
-  const rotateFlag = flagBool3(args2, "rotate");
-  const forId = flag5(args2, "for");
-  const listFlag = flagBool3(args2, "list");
-  const revokeId = flag5(args2, "revoke");
+  const home = flag6(args2, "home");
+  const showFlag = flagBool4(args2, "show");
+  const rotateFlag = flagBool4(args2, "rotate");
+  const forId = flag6(args2, "for");
+  const listFlag = flagBool4(args2, "list");
+  const revokeId = flag6(args2, "revoke");
   if (!showFlag && !rotateFlag && !forId && !listFlag && !revokeId) {
-    die5("room invite: use --show | --rotate | --for <participant-id> [--passphrase <phrase>] [--ttl <seconds>] | --list | --revoke <participant-id>");
+    die6("room invite: use --show | --rotate | --for <participant-id> [--passphrase <phrase>] [--ttl <seconds>] | --list | --revoke <participant-id>");
   }
   const { roomId: resolvedId, entry: room } = resolveRoom(roomId, home);
   const identity = loadIdentityWithSecret(home);
   if (!identity)
-    die5('No identity. Run "mesh keygen" first.');
+    die6('No identity. Run "mesh keygen" first.');
   if (showFlag) {
     if (!room.join_secret) {
-      die5(`room invite --show: no local join_secret for "${resolvedId}" (only the room creator has it; the room never stores plaintext)`);
+      die6(`room invite --show: no local join_secret for "${resolvedId}" (only the room creator has it; the room never stores plaintext)`);
     }
-    ok6(`${resolvedId}.${room.join_secret}`);
+    ok7(`${resolvedId}.${room.join_secret}`);
     return;
   }
   const client2 = new MeshClient({
@@ -12241,57 +12325,57 @@ async function cmdRoomInvite(args2) {
     const result = await client2.rotateInvite();
     if (!result.ok) {
       if (result.status === 403)
-        die5(`room invite --rotate: only the room owner may rotate "${resolvedId}" — run this from the owner's MESH_HOME.`);
-      die5(`room invite --rotate failed: [${result.error}] ${result.detail}`);
+        die6(`room invite --rotate: only the room owner may rotate "${resolvedId}" — run this from the owner's MESH_HOME.`);
+      die6(`room invite --rotate failed: [${result.error}] ${result.detail}`);
     }
     const newSecret = extractInviteSecret(result.invite, resolvedId);
     upsertRoom(resolvedId, { ...room, join_secret: newSecret }, home);
-    ok6(`New invite: ${result.invite}`);
-    ok6(`Share with participants: mesh room join ${room.url} ${result.invite}`);
+    ok7(`New invite: ${result.invite}`);
+    ok7(`Share with participants: mesh room join ${room.url} ${result.invite}`);
   } else if (forId) {
-    const passphrase = flag5(args2, "passphrase") ?? generatePassphrase();
-    const ttlRaw = flag5(args2, "ttl");
+    const passphrase = flag6(args2, "passphrase") ?? generatePassphrase();
+    const ttlRaw = flag6(args2, "ttl");
     const ttlS = ttlRaw !== undefined ? Number(ttlRaw) : undefined;
     if (ttlS !== undefined && (!Number.isFinite(ttlS) || ttlS <= 0))
-      die5("room invite: --ttl must be a positive number of seconds");
+      die6("room invite: --ttl must be a positive number of seconds");
     const result = await client2.createPassphraseInvite(forId, passphrase, ttlS);
     if (!result.ok) {
       if (result.status === 403)
-        die5(`room invite --for: only the room owner may mint invites for "${resolvedId}" — run this from the owner's MESH_HOME.`);
-      die5(`room invite --for failed: [${result.error}] ${result.detail}`);
+        die6(`room invite --for: only the room owner may mint invites for "${resolvedId}" — run this from the owner's MESH_HOME.`);
+      die6(`room invite --for failed: [${result.error}] ${result.detail}`);
     }
     const mins = Math.round((result.expires - Date.now()) / 60000);
-    ok6(`Passphrase invite for "${forId}": ${passphrase}`);
-    ok6(`Single-use, expires in ~${mins} min. Share the phrase out-of-band; they run:`);
-    ok6(`  mesh keygen --id "${forId}"   (if they have no identity yet)`);
-    ok6(`  mesh room join ${room.url} ${resolvedId} --passphrase ${passphrase}`);
-    ok6(`Note: the phrase only admits an agent whose identity id is exactly "${forId}".`);
+    ok7(`Passphrase invite for "${forId}": ${passphrase}`);
+    ok7(`Single-use, expires in ~${mins} min. Share the phrase out-of-band; they run:`);
+    ok7(`  mesh keygen --id "${forId}"   (if they have no identity yet)`);
+    ok7(`  mesh room join ${room.url} ${resolvedId} --passphrase ${passphrase}`);
+    ok7(`Note: the phrase only admits an agent whose identity id is exactly "${forId}".`);
   } else if (listFlag) {
     const result = await client2.listPassphraseInvites();
     if (!result.ok) {
       if (result.status === 403)
-        die5(`room invite --list: only the room owner may list invites for "${resolvedId}".`);
-      die5(`room invite --list failed: [${result.error}] ${result.detail}`);
+        die6(`room invite --list: only the room owner may list invites for "${resolvedId}".`);
+      die6(`room invite --list failed: [${result.error}] ${result.detail}`);
     }
     if (result.invites.length === 0) {
-      ok6("No pending passphrase invites.");
+      ok7("No pending passphrase invites.");
       return;
     }
-    ok6(`Pending passphrase invites (${result.invites.length}):`);
+    ok7(`Pending passphrase invites (${result.invites.length}):`);
     for (const inv of result.invites) {
       const mins = Math.max(0, Math.round((inv.expires - Date.now()) / 60000));
-      ok6(`  ${inv.participant_id}  —  expires in ~${mins} min${inv.attempts > 0 ? `  —  ${inv.attempts} failed attempt(s)` : ""}`);
+      ok7(`  ${inv.participant_id}  —  expires in ~${mins} min${inv.attempts > 0 ? `  —  ${inv.attempts} failed attempt(s)` : ""}`);
     }
   } else if (revokeId) {
     const result = await client2.revokePassphraseInvite(revokeId);
     if (!result.ok) {
       if (result.status === 404)
-        die5(`room invite --revoke: no pending invite for "${revokeId}".`);
+        die6(`room invite --revoke: no pending invite for "${revokeId}".`);
       if (result.status === 403)
-        die5(`room invite --revoke: only the room owner may revoke invites for "${resolvedId}".`);
-      die5(`room invite --revoke failed: [${result.error}] ${result.detail}`);
+        die6(`room invite --revoke: only the room owner may revoke invites for "${resolvedId}".`);
+      die6(`room invite --revoke failed: [${result.error}] ${result.detail}`);
     }
-    ok6(`Revoked pending invite for "${revokeId}".`);
+    ok7(`Revoked pending invite for "${revokeId}".`);
   }
 }
 function isFilePlaneEntry(performative) {
@@ -12300,9 +12384,8 @@ function isFilePlaneEntry(performative) {
 function flagOutOfScope(closure, canRead) {
   return closure.map((path4) => ({ path: path4, readable: canRead(path4) }));
 }
-var COLLAB_LANE_EXCLUDE = ["file.*", "system.*"];
 function resolveLogExclude(all2) {
-  return all2 ? undefined : COLLAB_LANE_EXCLUDE;
+  return all2 ? undefined : [...COLLAB_LANE_EXCLUDE];
 }
 function collabLaneHint(all2) {
   return all2 ? undefined : "— collab lane: file/system entries hidden (mesh log --all) —";
@@ -12324,16 +12407,16 @@ async function fetchLogEntries(client2, exclude, maxEntries = 1e4) {
   return { entries: all2, head };
 }
 async function cmdLog(args2) {
-  const follow = flagBool3(args2, "f");
-  const all2 = flagBool3(args2, "all");
-  const home = flag5(args2, "home");
-  const roomArg = flag5(args2, "room");
+  const follow = flagBool4(args2, "f");
+  const all2 = flagBool4(args2, "all");
+  const home = flag6(args2, "home");
+  const roomArg = flag6(args2, "room");
   const { entry: room } = resolveRoom(roomArg, home);
   const identity = loadIdentityWithSecret(home);
   if (!identity)
-    die5('No identity. Run "mesh keygen" first.');
+    die6('No identity. Run "mesh keygen" first.');
   const roomIdFromUrl = room.url.split("/").pop() ?? "unknown";
-  ok6(ansi(DIM, `room: ${roomIdFromUrl}`));
+  ok7(ansi(DIM, `room: ${roomIdFromUrl}`));
   const client2 = new MeshClient({
     roomUrl: room.url,
     token: room.token,
@@ -12349,7 +12432,7 @@ async function cmdLog(args2) {
       client2.getState().catch(() => null)
     ]);
     if (entries.length > 0)
-      ok6(renderEntries(entries));
+      ok7(renderEntries(entries));
     let senderWidth;
     if (entries.length > 0) {
       const widths = entries.map((e) => e.submission.sender.length);
@@ -12362,7 +12445,7 @@ async function cmdLog(args2) {
     if (tty)
       process.stdout.write(footer);
     else
-      ok6(footer);
+      ok7(footer);
     for await (const frame of client2.follow(since, undefined, { exclude })) {
       if (frame.type === "entry") {
         if (senderWidth === undefined) {
@@ -12372,7 +12455,7 @@ async function cmdLog(args2) {
         if (tty)
           printAboveFooter(line, footer);
         else
-          ok6(line);
+          ok7(line);
         since = frame.entry.seq;
       }
     }
@@ -12382,22 +12465,22 @@ async function cmdLog(args2) {
   } else {
     const { entries, head } = await fetchLogEntries(client2, exclude);
     if (entries.length === 0) {
-      ok6("(no entries)");
+      ok7("(no entries)");
     } else {
-      ok6(renderEntries(entries));
+      ok7(renderEntries(entries));
     }
-    ok6(renderStateHeader(head));
+    ok7(renderStateHeader(head));
     if (laneHint)
-      ok6(ansi(DIM, laneHint));
+      ok7(ansi(DIM, laneHint));
   }
 }
 async function cmdChat(args2) {
-  const home = flag5(args2, "home");
-  const roomArg = flag5(args2, "room");
+  const home = flag6(args2, "home");
+  const roomArg = flag6(args2, "room");
   const { entry: room } = resolveRoom(roomArg, home);
   const identity = loadIdentityWithSecret(home);
   if (!identity)
-    die5('No identity. Run "mesh keygen" first.');
+    die6('No identity. Run "mesh keygen" first.');
   const roomIdFromUrl = room.url.split("/").pop() ?? "unknown";
   const client2 = new MeshClient({
     roomUrl: room.url,
@@ -12411,7 +12494,7 @@ async function cmdChat(args2) {
     client2.getState().catch(() => null)
   ]);
   if (entries.length > 0)
-    ok6(renderEntries(entries));
+    ok7(renderEntries(entries));
   const widths = entries.map((e) => e.submission.sender.length);
   let senderWidth = widths.length > 0 ? Math.min(28, Math.max(12, Math.max(...widths))) : undefined;
   let since = head.seq;
@@ -12460,16 +12543,16 @@ async function cmdChat(args2) {
   await followDone.catch(() => {});
 }
 async function cmdPost(args2) {
-  const body = args2.positional[0] ?? flag5(args2, "body");
+  const body = args2.positional[0] ?? flag6(args2, "body");
   if (!body)
-    die5("post: body is required (positional or --body)");
-  const thread = flag5(args2, "thread");
-  const home = flag5(args2, "home");
-  const roomArg = flag5(args2, "room");
+    die6("post: body is required (positional or --body)");
+  const thread = flag6(args2, "thread");
+  const home = flag6(args2, "home");
+  const roomArg = flag6(args2, "room");
   const { roomId, entry: room } = resolveRoom(roomArg, home);
   const identity = loadIdentityWithSecret(home);
   if (!identity)
-    die5('No identity. Run "mesh keygen" first.');
+    die6('No identity. Run "mesh keygen" first.');
   const client2 = new MeshClient({
     roomUrl: room.url,
     token: room.token,
@@ -12482,25 +12565,25 @@ async function cmdPost(args2) {
     input.thread = thread;
   const result = await client2.postEntry(input);
   if (!result.ok)
-    die5(`post failed: [${result.error}] ${result.detail}`);
-  ok6(`Posted seq=${result.seq}`);
+    die6(`post failed: [${result.error}] ${result.detail}`);
+  ok7(`Posted seq=${result.seq}`);
 }
 async function cmdAnnounce(args2) {
   const taskRef = args2.positional[0];
   if (!taskRef)
-    die5("announce: <task_ref> is required");
+    die6("announce: <task_ref> is required");
   const body = requiredFlag(args2, "body", "announce");
-  const home = flag5(args2, "home");
-  const roomArg = flag5(args2, "room");
+  const home = flag6(args2, "home");
+  const roomArg = flag6(args2, "room");
   const { roomId, entry: room } = resolveRoom(roomArg, home);
   const identity = loadIdentityWithSecret(home);
   if (!identity)
-    die5('No identity. Run "mesh keygen" first.');
-  const verdictBy = flag5(args2, "verdict-by");
-  const claimWinStr = flag5(args2, "claim-window-s");
-  const leaseTtlStr = flag5(args2, "lease-ttl-s");
-  const maxClaimStr = flag5(args2, "max-claim-s");
-  const dependsOn = flag5(args2, "depends-on");
+    die6('No identity. Run "mesh keygen" first.');
+  const verdictBy = flag6(args2, "verdict-by");
+  const claimWinStr = flag6(args2, "claim-window-s");
+  const leaseTtlStr = flag6(args2, "lease-ttl-s");
+  const maxClaimStr = flag6(args2, "max-claim-s");
+  const dependsOn = flag6(args2, "depends-on");
   const data = { mode: "volunteer" };
   if (verdictBy)
     data["verdict_by"] = verdictBy.split(",").map((s) => s.trim());
@@ -12521,23 +12604,23 @@ async function cmdAnnounce(args2) {
   });
   const result = await client2.postEntry({ performative: "announce", task_ref: taskRef, body, data });
   if (!result.ok)
-    die5(`announce failed: [${result.error}] ${result.detail}`);
-  ok6(`Announced ${taskRef} (seq=${result.seq})`);
+    die6(`announce failed: [${result.error}] ${result.detail}`);
+  ok7(`Announced ${taskRef} (seq=${result.seq})`);
 }
 async function simpleTaskCmd(performative, args2, requireBody = false) {
   const taskRef = args2.positional[0];
   if (!taskRef)
-    die5(`${performative}: <task_ref> is required`);
-  const body = flag5(args2, "body");
-  const home = flag5(args2, "home");
-  const roomArg = flag5(args2, "room");
+    die6(`${performative}: <task_ref> is required`);
+  const body = flag6(args2, "body");
+  const home = flag6(args2, "home");
+  const roomArg = flag6(args2, "room");
   const { roomId, entry: room } = resolveRoom(roomArg, home);
   const identity = loadIdentityWithSecret(home);
   if (!identity)
-    die5('No identity. Run "mesh keygen" first.');
+    die6('No identity. Run "mesh keygen" first.');
   if (requireBody && !body)
-    die5(`${performative}: --body is required`);
-  const artifacts = flag5(args2, "artifact");
+    die6(`${performative}: --body is required`);
+  const artifacts = flag6(args2, "artifact");
   const input = { performative, task_ref: taskRef };
   if (body)
     input.body = body;
@@ -12552,29 +12635,29 @@ async function simpleTaskCmd(performative, args2, requireBody = false) {
   });
   const result = await client2.postEntry(input);
   if (!result.ok)
-    die5(`${performative} failed: [${result.error}] ${result.detail}${result.hint ? " — " + result.hint : ""}`);
-  ok6(`${performative} ${taskRef} (seq=${result.seq})`);
+    die6(`${performative} failed: [${result.error}] ${result.detail}${result.hint ? " — " + result.hint : ""}`);
+  ok7(`${performative} ${taskRef} (seq=${result.seq})`);
 }
 async function runAck(client2, args2) {
   const seqArg = args2.positional[0];
   const escalateSeq = seqArg !== undefined ? Number(seqArg) : NaN;
   if (!Number.isInteger(escalateSeq) || escalateSeq < 0)
-    die5("ack: <escalate_seq> (a room entry seq) is required");
+    die6("ack: <escalate_seq> (a room entry seq) is required");
   const result = await client2.postEntry({
     performative: "escalate.ack",
     data: { escalate_seq: escalateSeq }
   });
   if (!result.ok)
-    die5(`ack failed: [${result.error}] ${result.detail}${result.hint ? " — " + result.hint : ""}`);
-  ok6(`acked escalation ${escalateSeq} (seq=${result.seq})`);
+    die6(`ack failed: [${result.error}] ${result.detail}${result.hint ? " — " + result.hint : ""}`);
+  ok7(`acked escalation ${escalateSeq} (seq=${result.seq})`);
 }
 async function cmdAck(args2) {
-  const home = flag5(args2, "home");
-  const roomArg = flag5(args2, "room");
+  const home = flag6(args2, "home");
+  const roomArg = flag6(args2, "room");
   const { roomId, entry: room } = resolveRoom(roomArg, home);
   const identity = loadIdentityWithSecret(home);
   if (!identity)
-    die5('No identity. Run "mesh keygen" first.');
+    die6('No identity. Run "mesh keygen" first.');
   const client2 = new MeshClient({
     roomUrl: room.url,
     token: room.token,
@@ -12596,14 +12679,14 @@ function resolveDeliverMode(a) {
 async function runDeliver(client2, args2) {
   const taskRef = args2.positional[0];
   if (!taskRef)
-    die5("deliver: <task_ref> is required");
+    die6("deliver: <task_ref> is required");
   let m;
   try {
-    m = resolveDeliverMode({ dir: flag5(args2, "dir"), artifact: flag5(args2, "artifact") });
+    m = resolveDeliverMode({ dir: flag6(args2, "dir"), artifact: flag6(args2, "artifact") });
   } catch (err2) {
-    die5(err2 instanceof Error ? err2.message : String(err2));
+    die6(err2 instanceof Error ? err2.message : String(err2));
   }
-  const body = flag5(args2, "body");
+  const body = flag6(args2, "body");
   let artifacts;
   let uploadNote = "";
   if (m.mode === "dir") {
@@ -12611,7 +12694,7 @@ async function runDeliver(client2, args2) {
     const { bytes, hash, size: size2 } = await packDir(m.dir, { exclude: excludes });
     const put = await client2.putArtifact(hash, bytes);
     if (!put.ok)
-      die5(`deliver: artifact upload failed: [${put.error}] ${put.detail}`);
+      die6(`deliver: artifact upload failed: [${put.error}] ${put.detail}`);
     artifacts = ["r2:" + hash];
     uploadNote = `  artifact r2:${hash}  (${size2} bytes, ${put.deduped ? "deduped" : "uploaded"})`;
   } else {
@@ -12624,22 +12707,22 @@ async function runDeliver(client2, args2) {
     ...body ? { body } : {}
   });
   if (!r.ok)
-    die5(`deliver failed: [${r.error}] ${r.detail}${r.hint ? " — " + r.hint : ""}`);
-  ok6(m.mode === "dir" ? `delivered ${taskRef} (seq=${r.seq})${uploadNote}` : `deliver ${taskRef} (seq=${r.seq})`);
+    die6(`deliver failed: [${r.error}] ${r.detail}${r.hint ? " — " + r.hint : ""}`);
+  ok7(m.mode === "dir" ? `delivered ${taskRef} (seq=${r.seq})${uploadNote}` : `deliver ${taskRef} (seq=${r.seq})`);
   const watchOutcomes = await registerDeliverAutoWatch(client2, taskRef);
   for (const outcome of watchOutcomes) {
     if (!outcome.ok) {
-      ok6(`deliver: warning — watch registration failed [${outcome.error}] ${outcome.detail} — you will not be notified of the verdict`);
+      ok7(`deliver: warning — watch registration failed [${outcome.error}] ${outcome.detail} — you will not be notified of the verdict`);
     }
   }
 }
 async function cmdDeliver(args2) {
-  const home = flag5(args2, "home");
-  const roomArg = flag5(args2, "room");
+  const home = flag6(args2, "home");
+  const roomArg = flag6(args2, "room");
   const { roomId, entry: room } = resolveRoom(roomArg, home);
   const identity = loadIdentityWithSecret(home);
   if (!identity)
-    die5('No identity. Run "mesh keygen" first.');
+    die6('No identity. Run "mesh keygen" first.');
   const client2 = new MeshClient({
     roomUrl: room.url,
     token: room.token,
@@ -12662,7 +12745,7 @@ function resolveFetchRef(arg, entries) {
 }
 async function collectAllEntries(client2) {
   const all2 = [];
-  let since = 0;
+  let since = -1;
   for (;; ) {
     const { entries } = await client2.getEntries({ since, limit: 100 });
     all2.push(...entries);
@@ -12675,13 +12758,13 @@ async function collectAllEntries(client2) {
 async function cmdFetch(args2) {
   const arg = args2.positional[0];
   if (!arg)
-    die5("fetch: <task|r2:hash> is required");
-  const home = flag5(args2, "home");
-  const roomArg = flag5(args2, "room");
+    die6("fetch: <task|r2:hash> is required");
+  const home = flag6(args2, "home");
+  const roomArg = flag6(args2, "room");
   const { roomId, entry: room } = resolveRoom(roomArg, home);
   const identity = loadIdentityWithSecret(home);
   if (!identity)
-    die5('No identity. Run "mesh keygen" first.');
+    die6('No identity. Run "mesh keygen" first.');
   const client2 = new MeshClient({
     roomUrl: room.url,
     token: room.token,
@@ -12694,19 +12777,19 @@ async function cmdFetch(args2) {
   try {
     ref = resolveFetchRef(arg, entries);
   } catch (err2) {
-    die5(err2 instanceof Error ? err2.message : String(err2));
+    die6(err2 instanceof Error ? err2.message : String(err2));
   }
   if (ref.kind === "other") {
-    ok6(`Artifact is not an R2 tarball: ${ref.raw} (fetch it manually)`);
+    ok7(`Artifact is not an R2 tarball: ${ref.raw} (fetch it manually)`);
     return;
   }
   const bytes = await client2.getArtifact(ref.hash);
   if (!(bytes instanceof Uint8Array))
-    die5(`fetch: [${bytes.error}] ${bytes.detail}${bytes.hint ? " — " + bytes.hint : ""}`);
+    die6(`fetch: [${bytes.error}] ${bytes.detail}${bytes.hint ? " — " + bytes.hint : ""}`);
   const name = arg.startsWith("r2:") ? ref.hash : arg;
-  const dest = resolve4(flag5(args2, "into") ?? join7(home ?? meshHome(), "artifacts", name));
+  const dest = resolve4(flag6(args2, "into") ?? join7(home ?? meshHome(), "artifacts", name));
   await unpackInto(bytes, dest);
-  ok6(`Extracted to ${dest}`);
+  ok7(`Extracted to ${dest}`);
 }
 var REFETCH_DEBOUNCE_MS = 300;
 var TICK_MS = 5000;
@@ -12777,9 +12860,9 @@ async function statusScan(client2, opts) {
     client2.listLeases()
   ]);
   if ("error" in treeResult)
-    die5(`fs status: [${treeResult.error}] ${treeResult.detail}`);
+    die6(`fs status: [${treeResult.error}] ${treeResult.detail}`);
   if (!Array.isArray(leasesResult))
-    die5(`fs status: [${leasesResult.error}] ${leasesResult.detail}`);
+    die6(`fs status: [${leasesResult.error}] ${leasesResult.detail}`);
   const scanDir = normPrefix ? join7(root, normPrefix) : root;
   const isIgnored = makeIgnore(loadMeshignore(scanDir), {});
   const localAbsByPath = new Map;
@@ -12859,7 +12942,7 @@ var FS_CMDS = {
   put: async (client2, args2, senderId) => {
     const localPath = args2.positional[0];
     if (!localPath)
-      die5("fs put: <path> is required");
+      die6("fs put: <path> is required");
     let isDir = false, exists = true;
     try {
       isDir = statSync2(localPath).isDirectory();
@@ -12867,30 +12950,30 @@ var FS_CMDS = {
       exists = false;
     }
     if (!exists)
-      die5(`fs put: no such file or directory: ${localPath}`);
-    const home = flag5(args2, "home");
-    const strict = flagBool3(args2, "strict");
+      die6(`fs put: no such file or directory: ${localPath}`);
+    const home = flag6(args2, "home");
+    const strict = flagBool4(args2, "strict");
     let candidates;
     let treePrefix;
     let batchLabel;
     let prunedCount = 0;
     if (isDir) {
-      const prefix = (flag5(args2, "as") ?? localPath).replace(/\\/g, "/").split("/").filter((s) => s.length > 0 && s !== ".").join("/");
-      const isIgnored = makeIgnore(loadMeshignore(localPath), { includeHidden: flagBool3(args2, "all") });
+      const prefix = (flag6(args2, "as") ?? localPath).replace(/\\/g, "/").split("/").filter((s) => s.length > 0 && s !== ".").join("/");
+      const isIgnored = makeIgnore(loadMeshignore(localPath), { includeHidden: flagBool4(args2, "all") });
       const rels = walkDirFiles(localPath, isIgnored);
       if (rels.length === 0)
-        die5(`fs put: ${localPath} has no eligible files (hidden entries skipped unless --all; .meshignore patterns applied)`);
+        die6(`fs put: ${localPath} has no eligible files (hidden entries skipped unless --all; .meshignore patterns applied)`);
       candidates = rels.map((rel) => ({
         repoPath: [prefix, rel].filter((s) => s.length > 0).join("/"),
         localAbs: join7(localPath, rel)
       }));
       treePrefix = prefix;
       batchLabel = `${rels.length} file(s) from ${localPath}/ → ${prefix || "(room root)"}`;
-      if (flagBool3(args2, "prune-ignored")) {
+      if (flagBool4(args2, "prune-ignored")) {
         const sidecarPaths = listSidecarPaths(client2.roomId, home).filter((p) => !treePrefix || p === treePrefix || p.startsWith(treePrefix + "/"));
         const treeResult = await client2.getTree(treePrefix || undefined);
         if ("error" in treeResult)
-          die5(`fs put --prune-ignored: [${treeResult.error}] ${treeResult.detail}`);
+          die6(`fs put --prune-ignored: [${treeResult.error}] ${treeResult.detail}`);
         const tipPaths = new Set(treeResult.tree.map((n) => n.path));
         for (const p of sidecarPaths) {
           if (!tipPaths.has(p))
@@ -12902,13 +12985,13 @@ var FS_CMDS = {
           if (r.ok) {
             dropSidecar(client2.roomId, p, home);
             prunedCount++;
-            ok6(`  pruned: ${p}`);
+            ok7(`  pruned: ${p}`);
           } else
-            ok6(`  pruned: ${p} FAILED: [${r.error}] ${r.detail}`);
+            ok7(`  pruned: ${p} FAILED: [${r.error}] ${r.detail}`);
         }
       }
     } else {
-      const as = flag5(args2, "as") ?? localPath;
+      const as = flag6(args2, "as") ?? localPath;
       candidates = [{ repoPath: as, localAbs: localPath }];
       treePrefix = as;
       batchLabel = as;
@@ -12923,14 +13006,14 @@ var FS_CMDS = {
     const sizes = candidates.map((c) => ({ path: c.repoPath, size: statSync2(c.localAbs).size }));
     const oversized = oversizedTargets(sizes, capBytes);
     if (oversized.length > 0) {
-      die5(artifactCapExceededMessage(oversized, capBytes));
+      die6(artifactCapExceededMessage(oversized, capBytes));
     }
     const targets = candidates.map((c) => ({
       repoPath: c.repoPath,
       localAbs: c.localAbs,
       localBytes: new Uint8Array(readFileSync8(c.localAbs))
     }));
-    const json = flagBool3(args2, "json");
+    const json = flagBool4(args2, "json");
     const mode = resolveMode(json, process.stderr.isTTY ?? false);
     const rateLimit = state?.defaults.rate_limit;
     const reporter = createReporter({ mode, rateLimit });
@@ -12940,7 +13023,7 @@ var FS_CMDS = {
       selfId: senderId,
       strict,
       treePrefix,
-      stopOnError: flagBool3(args2, "stop-on-error"),
+      stopOnError: flagBool4(args2, "stop-on-error"),
       retry: makeRateRetry(reporter.onWait),
       onProgress: reporter.sink
     });
@@ -12948,10 +13031,10 @@ var FS_CMDS = {
       process.exitCode = result.exitCode;
       return;
     }
-    const verbose = flagBool3(args2, "verbose") || flagBool3(args2, "v");
+    const verbose = flagBool4(args2, "verbose") || flagBool4(args2, "v");
     for (const row of result.rows) {
       if (verbose || putRowNeedsAttention(row.outcome))
-        ok6(formatPutRowMessage(row.repoPath, row.outcome));
+        ok7(formatPutRowMessage(row.repoPath, row.outcome));
     }
     if (result.hardError && result.rows.length === 0) {
       const e = result.hardError;
@@ -12961,37 +13044,37 @@ var FS_CMDS = {
       return;
     }
     const summary = summarizePutRows(result.rows);
-    ok6(`fs put ${result.stopped ? "stopped early" : "done"}: ${formatPutSummary(batchLabel, summary)}${prunedCount > 0 ? `, ${prunedCount} pruned` : ""}  [exit ${result.exitCode}]`);
+    ok7(`fs put ${result.stopped ? "stopped early" : "done"}: ${formatPutSummary(batchLabel, summary)}${prunedCount > 0 ? `, ${prunedCount} pruned` : ""}  [exit ${result.exitCode}]`);
     if (result.stopped) {
       const done = result.rows.length, total = targets.length;
       const where = result.hardError ? "see the cause below" : "see the flagged rows above";
-      ok6(`  aborted at ${done}/${total} files — ${total - done} not attempted (${where}, resolve, then re-run to resume${flagBool3(args2, "stop-on-error") ? "; or drop --stop-on-error to skip failures and continue" : ""})`);
+      ok7(`  aborted at ${done}/${total} files — ${total - done} not attempted (${where}, resolve, then re-run to resume${flagBool4(args2, "stop-on-error") ? "; or drop --stop-on-error to skip failures and continue" : ""})`);
     }
     if (result.hardError) {
       const e = result.hardError;
       process.stderr.write(`  cause: [${e.error}]${e.detail ? " " + e.detail : ""}${e.hint ? " — " + e.hint : ""}
 `);
     } else if (summary.errors > 0) {
-      ok6(`  ${summary.errors} file(s) failed and were skipped (rows above); re-run to retry, or --stop-on-error to abort on the first failure`);
+      ok7(`  ${summary.errors} file(s) failed and were skipped (rows above); re-run to retry, or --stop-on-error to abort on the first failure`);
     }
     if (result.informed)
-      ok6("  conflicts/forks/resurrections signaled (see 'mesh fs status')");
-    ok6(`verify: mesh fs status${treePrefix ? " " + treePrefix : ""}${verbose ? "" : "   (--verbose for the full per-file list)"}`);
+      ok7("  conflicts/forks/resurrections signaled (see 'mesh fs status')");
+    ok7(`verify: mesh fs status${treePrefix ? " " + treePrefix : ""}${verbose ? "" : "   (--verbose for the full per-file list)"}`);
     process.exitCode = result.exitCode;
   },
   ls: async (client2, args2) => {
     const prefix = args2.positional[0];
-    const follow = flagBool3(args2, "f");
-    const into = resolveWorkspaceRoot(flag5(args2, "into"), flag5(args2, "root"));
+    const follow = flagBool4(args2, "f");
+    const into = resolveWorkspaceRoot(flag6(args2, "into"), flag6(args2, "root"));
     const [treeResult, leasesResult, state] = await Promise.all([
       client2.getTree(prefix),
       client2.listLeases(),
       client2.getState()
     ]);
     if ("error" in treeResult)
-      die5(`fs ls: [${treeResult.error}] ${treeResult.detail}`);
+      die6(`fs ls: [${treeResult.error}] ${treeResult.detail}`);
     if (!Array.isArray(leasesResult))
-      die5(`fs ls: [${leasesResult.error}] ${leasesResult.detail}`);
+      die6(`fs ls: [${leasesResult.error}] ${leasesResult.detail}`);
     let rows = treeResult.tree;
     let leases = leasesResult;
     let cachedLocalSizes = localSizes(rows.map((r) => r.path), into);
@@ -13007,7 +13090,7 @@ var FS_CMDS = {
       now: Date.now(),
       recent
     });
-    ok6(render());
+    ok7(render());
     if (!follow)
       return;
     const refetch = async () => {
@@ -13032,7 +13115,7 @@ var FS_CMDS = {
       const recentLines = [];
       const redraw = () => {
         process.stdout.write("\x1B[2J\x1B[H");
-        ok6(render(recentLines));
+        ok7(render(recentLines));
       };
       let refetchPending = false;
       let debounceTimer;
@@ -13059,20 +13142,20 @@ var FS_CMDS = {
       }
     } else {
       const footer = ansi(DIM, "— streaming fs entries (Ctrl+C to exit) —");
-      ok6(footer);
+      ok7(footer);
       await followFilePlane(client2, since, (line) => {
-        ok6(line);
+        ok7(line);
       });
     }
   },
   get: async (client2, args2) => {
     const repopath = args2.positional[0];
     if (!repopath)
-      die5("fs get: <repopath> is required");
-    const into = resolveWorkspaceRoot(flag5(args2, "into"), flag5(args2, "root"));
-    const home = flag5(args2, "home");
-    const prune = flagBool3(args2, "prune");
-    const json = flagBool3(args2, "json");
+      die6("fs get: <repopath> is required");
+    const into = resolveWorkspaceRoot(flag6(args2, "into"), flag6(args2, "root"));
+    const home = flag6(args2, "home");
+    const prune = flagBool4(args2, "prune");
+    const json = flagBool4(args2, "json");
     const reporter = createReporter({ mode: resolveMode(json, process.stderr.isTTY ?? false) });
     const result = await runGetBatch(client2, {
       roomId: client2.roomId,
@@ -13095,91 +13178,91 @@ var FS_CMDS = {
       return;
     }
     if (result.rows.every((r) => r.outcome.kind === "noop"))
-      die5(`fs get: not in tree: ${repopath}`);
+      die6(`fs get: not in tree: ${repopath}`);
     if (result.rows.length === 1 && result.rows[0].outcome.kind === "gated") {
-      die5(`fs get: '${repopath}' is discoverable but its content is gated — you lack a read grant on this path`);
+      die6(`fs get: '${repopath}' is discoverable but its content is gated — you lack a read grant on this path`);
     }
     let printed = false;
     for (const row of result.rows) {
       const line = formatGetRowMessage(row.repoPath, row.outcome);
       if (line) {
-        ok6(line);
+        ok7(line);
         printed = true;
       }
     }
     if (!printed) {
-      ok6(result.rows.length > 1 ? `  ${repopath} (${result.rows.length} file(s), all in sync)` : `  ${repopath} (unchanged)`);
+      ok7(result.rows.length > 1 ? `  ${repopath} (${result.rows.length} file(s), all in sync)` : `  ${repopath} (unchanged)`);
     }
     if (result.rows.some((r) => getRowNeedsVerify(r.outcome)))
-      ok6(`verify: mesh fs status ${repopath}`);
+      ok7(`verify: mesh fs status ${repopath}`);
     process.exitCode = result.exitCode;
   },
   rm: async (client2, args2) => {
     const repopath = args2.positional[0];
     if (!repopath)
-      die5("fs rm: <repopath> is required");
-    if (flagBool3(args2, "r") || flagBool3(args2, "recursive")) {
+      die6("fs rm: <repopath> is required");
+    if (flagBool4(args2, "r") || flagBool4(args2, "recursive")) {
       const t = await client2.getTree(repopath);
       if ("error" in t)
-        die5(`fs rm: [${t.error}] ${t.detail}`);
+        die6(`fs rm: [${t.error}] ${t.detail}`);
       const norm = normalizeId(repopath);
       const targets = t.tree.filter((n) => n.path === norm || n.path.startsWith(norm + "/"));
       if (targets.length === 0)
-        die5(`fs rm: nothing under: ${repopath}`);
+        die6(`fs rm: nothing under: ${repopath}`);
       for (const n of targets) {
         const r2 = await withRateRetry(() => client2.postEntry({ performative: "file.delete", data: { path: n.path } }), (x) => !x.ok && x.error === "rate_limited", (x) => !x.ok ? x.retry_after_s : undefined);
         if (!r2.ok)
-          die5(`fs rm: ${n.path}: [${r2.error}] ${r2.detail}${r2.hint ? " — " + r2.hint : ""}`);
-        ok6(`  rm ${n.path}`);
+          die6(`fs rm: ${n.path}: [${r2.error}] ${r2.detail}${r2.hint ? " — " + r2.hint : ""}`);
+        ok7(`  rm ${n.path}`);
       }
-      ok6(`fs rm: ${targets.length} file(s) under ${norm}`);
+      ok7(`fs rm: ${targets.length} file(s) under ${norm}`);
       return;
     }
     const r = await withRateRetry(() => client2.postEntry({ performative: "file.delete", data: { path: repopath } }), (x) => !x.ok && x.error === "rate_limited", (x) => !x.ok ? x.retry_after_s : undefined);
     if (!r.ok)
-      die5(`fs rm: [${r.error}] ${r.detail}${r.hint ? " — " + r.hint : ""}`);
-    ok6(`fs rm ${repopath}`);
+      die6(`fs rm: [${r.error}] ${r.detail}${r.hint ? " — " + r.hint : ""}`);
+    ok7(`fs rm ${repopath}`);
   },
   edit: fsCmdEdit,
   lock: async (client2, args2) => {
     const repopath = args2.positional[0];
     if (!repopath)
-      die5("fs lock: <path> is required");
+      die6("fs lock: <path> is required");
     const r = await client2.postEntry({ performative: "file.lock", data: { path: repopath } });
     if (!r.ok) {
       if (r.error === "path_locked") {
         const holder = extractLockHolder(r.detail) ?? "another participant";
         const sub2 = await subscribePathWatch(client2, repopath);
         if (!sub2.ok)
-          ok6(`fs lock: warning — watch registration failed [${sub2.error}] ${sub2.detail} — you will not be notified of conflicts`);
-        die5(`fs lock: path '${repopath}' is locked by '${holder}' — you will be notified when it frees`);
+          ok7(`fs lock: warning — watch registration failed [${sub2.error}] ${sub2.detail} — you will not be notified of conflicts`);
+        die6(`fs lock: path '${repopath}' is locked by '${holder}' — you will be notified when it frees`);
       }
-      die5(`fs lock: [${r.error}] ${r.detail}${r.hint ? " — " + r.hint : ""}`);
+      die6(`fs lock: [${r.error}] ${r.detail}${r.hint ? " — " + r.hint : ""}`);
     }
-    ok6(`fs lock ${repopath} (seq=${r.seq})`);
+    ok7(`fs lock ${repopath} (seq=${r.seq})`);
     const sub = await subscribePathWatch(client2, repopath);
     if (!sub.ok)
-      ok6(`fs lock: warning — lock succeeded but watch registration failed [${sub.error}] ${sub.detail} — you will not be notified of conflicts`);
+      ok7(`fs lock: warning — lock succeeded but watch registration failed [${sub.error}] ${sub.detail} — you will not be notified of conflicts`);
   },
   unlock: async (client2, args2) => {
     const repopath = args2.positional[0];
     if (!repopath)
-      die5("fs unlock: <path> is required");
+      die6("fs unlock: <path> is required");
     const r = await client2.postEntry({ performative: "file.unlock", data: { path: repopath } });
     if (!r.ok)
-      die5(`fs unlock: [${r.error}] ${r.detail}${r.hint ? " — " + r.hint : ""}`);
-    ok6(`fs unlock ${repopath} (seq=${r.seq})`);
+      die6(`fs unlock: [${r.error}] ${r.detail}${r.hint ? " — " + r.hint : ""}`);
+    ok7(`fs unlock ${repopath} (seq=${r.seq})`);
     await unsubscribePathWatch(client2, repopath);
   },
   grep: async (client2, args2) => {
     const query = args2.positional[0];
     if (!query)
-      die5("fs grep: <query> is required");
-    const prefix = flag5(args2, "prefix");
-    const limitStr = flag5(args2, "limit");
+      die6("fs grep: <query> is required");
+    const prefix = flag6(args2, "prefix");
+    const limitStr = flag6(args2, "limit");
     const limit = limitStr ? parseInt(limitStr, 10) : undefined;
-    const doHydrate = flagBool3(args2, "hydrate");
-    const into = resolveWorkspaceRoot(flag5(args2, "into"), flag5(args2, "root"));
+    const doHydrate = flagBool4(args2, "hydrate");
+    const into = resolveWorkspaceRoot(flag6(args2, "into"), flag6(args2, "root"));
     const result = await client2.search(query, { prefix, limit });
     if ("error" in result) {
       if (result.error === "search_unavailable") {
@@ -13192,10 +13275,10 @@ var FS_CMDS = {
       process.exit(1);
     }
     if (result.results.length === 0) {
-      ok6("(no matches)");
+      ok7("(no matches)");
     } else {
       for (const r of result.results)
-        ok6(grepLine(r));
+        ok7(grepLine(r));
     }
     const skipNote = formatGrepSkipNote(result.skipped_count);
     if (skipNote)
@@ -13205,7 +13288,7 @@ var FS_CMDS = {
       return;
     if (!doHydrate)
       return;
-    const home = flag5(args2, "home");
+    const home = flag6(args2, "home");
     const hydrateReporter = createReporter({ mode: resolveMode(false, process.stderr.isTTY ?? false) });
     const hydrateResult = await hydrateGrepWinners(client2, result.results.map((r) => r.path), into, client2.roomId, home, hydrateReporter.sink);
     if (hydrateResult.hardError) {
@@ -13216,14 +13299,14 @@ var FS_CMDS = {
       return;
     }
     if (hydrateResult.rows.some((r) => getRowNeedsVerify(r.outcome)))
-      ok6("verify: mesh fs status");
+      ok7("verify: mesh fs status");
     process.exitCode = hydrateResult.exitCode;
   },
   hydrate: async (client2, args2) => {
     const prefix = args2.positional[0] ?? "";
-    const into = resolveWorkspaceRoot(flag5(args2, "into"), flag5(args2, "root"));
-    const home = flag5(args2, "home");
-    const prune = flagBool3(args2, "prune");
+    const into = resolveWorkspaceRoot(flag6(args2, "into"), flag6(args2, "root"));
+    const home = flag6(args2, "home");
+    const prune = flagBool4(args2, "prune");
     const reporter = createReporter({ mode: resolveMode(false, process.stderr.isTTY ?? false) });
     const result = await hydrateSubtree(client2, prefix, into, client2.roomId, home, prune, reporter.sink);
     if (result.hardError) {
@@ -13234,22 +13317,22 @@ var FS_CMDS = {
       return;
     }
     if (result.rows.length === 0) {
-      ok6("(nothing to hydrate)");
+      ok7("(nothing to hydrate)");
       return;
     }
-    ok6(`fs hydrate: ${result.rows.length} path(s) under ${prefix || "(room root)"} → ${resolve4(into)}`);
+    ok7(`fs hydrate: ${result.rows.length} path(s) under ${prefix || "(room root)"} → ${resolve4(into)}`);
     if (result.rows.some((r) => getRowNeedsVerify(r.outcome)))
-      ok6(`verify: mesh fs status${prefix ? " " + prefix : ""}`);
+      ok7(`verify: mesh fs status${prefix ? " " + prefix : ""}`);
     process.exitCode = result.exitCode;
   },
   log: async (client2, args2) => {
-    const follow = flagBool3(args2, "f");
+    const follow = flagBool4(args2, "f");
     const tty = process.stdout.isTTY ?? false;
     if (follow) {
       const { entries, head } = await client2.getEntries({ limit: 100 });
       const fsEntries = entries.filter((e) => isFilePlaneEntry(e.submission.performative));
       if (fsEntries.length > 0)
-        ok6(renderEntries(fsEntries));
+        ok7(renderEntries(fsEntries));
       let senderWidth;
       if (fsEntries.length > 0) {
         const widths = fsEntries.map((e) => e.submission.sender.length);
@@ -13260,7 +13343,7 @@ var FS_CMDS = {
       if (tty)
         process.stdout.write(footer);
       else
-        ok6(footer);
+        ok7(footer);
       for await (const frame of client2.follow(since)) {
         if (frame.type === "entry" && isFilePlaneEntry(frame.entry.submission.performative)) {
           if (senderWidth === undefined) {
@@ -13270,7 +13353,7 @@ var FS_CMDS = {
           if (tty)
             printAboveFooter(line, footer);
           else
-            ok6(line);
+            ok7(line);
           since = frame.entry.seq;
         }
       }
@@ -13281,11 +13364,11 @@ var FS_CMDS = {
       const { entries, head } = await client2.getEntries({ limit: 200 });
       const fsEntries = entries.filter((e) => isFilePlaneEntry(e.submission.performative));
       if (fsEntries.length === 0) {
-        ok6("(no file-plane entries)");
+        ok7("(no file-plane entries)");
       } else {
-        ok6(renderEntries(fsEntries));
+        ok7(renderEntries(fsEntries));
       }
-      ok6(renderStateHeader(head));
+      ok7(renderStateHeader(head));
     }
   },
   grant: fsCmdGrant,
@@ -13299,10 +13382,10 @@ var FS_CMDS = {
   deps: async (client2, args2, senderId) => {
     const entryPath = args2.positional[0];
     if (!entryPath)
-      die5("fs deps: <path> is required");
+      die6("fs deps: <path> is required");
     const treeResult = await client2.getTree();
     if ("error" in treeResult)
-      die5(`fs deps: [${treeResult.error}] ${treeResult.detail}`);
+      die6(`fs deps: [${treeResult.error}] ${treeResult.detail}`);
     const read = async (p) => {
       const node = resolveNode(treeResult.tree, p);
       if (!node)
@@ -13323,7 +13406,7 @@ var FS_CMDS = {
     const defaultAccess = normalizeDefaultAccess(state.defaults.default_access).discover;
     const grantsResult = await client2.listGrants();
     if (!Array.isArray(grantsResult)) {
-      die5(`fs deps: [${grantsResult.error}] ${grantsResult.detail}`);
+      die6(`fs deps: [${grantsResult.error}] ${grantsResult.detail}`);
       return;
     }
     const grants = grantsResult;
@@ -13337,113 +13420,113 @@ var FS_CMDS = {
       });
     };
     if (closure.length === 0) {
-      ok6(`${entryPath}: no out-of-entry dependencies found`);
+      ok7(`${entryPath}: no out-of-entry dependencies found`);
       return;
     }
     const flagged = flagOutOfScope(closure, canRead);
     for (const { path: path4, readable } of flagged) {
       const tag = readable ? "[readable]" : "[unreadable — run: mesh fs request " + path4 + "]";
-      ok6(`  ${path4}  ${tag}`);
+      ok7(`  ${path4}  ${tag}`);
     }
   },
   request: async (client2, args2) => {
     const requestPath = args2.positional[0];
     if (!requestPath)
-      die5("fs request: <path> is required");
-    const grade = flag5(args2, "grade") ?? "read";
+      die6("fs request: <path> is required");
+    const grade = flag6(args2, "grade") ?? "read";
     if (!isAccessGrade(grade))
-      die5("fs request: --grade must be discover|read|write|exclusive");
+      die6("fs request: --grade must be discover|read|write|exclusive");
     const r = await client2.postEntry({ performative: "file.request", data: { path: requestPath, grade } });
     if (!r.ok)
-      die5(`fs request: [${r.error}] ${r.detail}${r.hint ? " — " + r.hint : ""}`);
-    ok6(`fs request ${grade} on ${requestPath} (seq=${r.seq})`);
+      die6(`fs request: [${r.error}] ${r.detail}${r.hint ? " — " + r.hint : ""}`);
+    ok7(`fs request ${grade} on ${requestPath} (seq=${r.seq})`);
   },
   status: async (client2, args2) => {
     const prefix = args2.positional[0] ?? "";
-    const deep = flagBool3(args2, "deep");
-    const porcelain = flagBool3(args2, "porcelain");
-    const home = flag5(args2, "home");
-    const root = resolve4(flag5(args2, "root") ?? ".");
+    const deep = flagBool4(args2, "deep");
+    const porcelain = flagBool4(args2, "porcelain");
+    const home = flag6(args2, "home");
+    const root = resolve4(flag6(args2, "root") ?? ".");
     const rows = await statusScan(client2, { prefix, root, home, deep });
     const normPrefix = prefix ? normalizeId(prefix) : "";
     if (!porcelain)
-      ok6(`fs status: ${rows.length} path(s) under ${normPrefix || "."} (room=${client2.roomId})`);
+      ok7(`fs status: ${rows.length} path(s) under ${normPrefix || "."} (room=${client2.roomId})`);
     for (const row of rows)
-      ok6(formatStatusLine(row, { porcelain }));
+      ok7(formatStatusLine(row, { porcelain }));
     if (!porcelain) {
       const needsGet = rows.find((r) => r.state === "behind" || r.state === "diverged");
       if (needsGet)
-        ok6(`next: mesh fs get ${needsGet.path}`);
+        ok7(`next: mesh fs get ${needsGet.path}`);
     }
   },
   diff: async (client2, args2) => {
     const repopath = args2.positional[0];
     if (!repopath)
-      die5("fs diff: <path> is required");
-    const showBase = flagBool3(args2, "base");
-    const root = resolve4(flag5(args2, "root") ?? ".");
-    const home = flag5(args2, "home");
+      die6("fs diff: <path> is required");
+    const showBase = flagBool4(args2, "base");
+    const root = resolve4(flag6(args2, "root") ?? ".");
+    const home = flag6(args2, "home");
     const t = await client2.getTree();
     if ("error" in t)
-      die5(`fs diff: [${t.error}] ${t.detail}`);
+      die6(`fs diff: [${t.error}] ${t.detail}`);
     const node = resolveNode(t.tree, repopath);
     if (!node)
-      die5(`fs diff: not in tree: ${repopath}`);
+      die6(`fs diff: not in tree: ${repopath}`);
     if (!node.content_hash)
-      die5(`fs diff: '${repopath}' is discoverable but its content is gated — you lack a read grant on this path`);
+      die6(`fs diff: '${repopath}' is discoverable but its content is gated — you lack a read grant on this path`);
     const norm = normalizeId(repopath);
     let localBytes;
     try {
       localBytes = readFileSync8(join7(root, repopath));
     } catch {
-      die5(`fs diff: no local copy at ${resolve4(root, repopath)} — run 'mesh fs get ${repopath}' first`);
+      die6(`fs diff: no local copy at ${resolve4(root, repopath)} — run 'mesh fs get ${repopath}' first`);
     }
     let hash;
     try {
       hash = hashFromRef(node.content_hash);
     } catch (e) {
-      die5(`fs diff: ${e instanceof Error ? e.message : String(e)}`);
+      die6(`fs diff: ${e instanceof Error ? e.message : String(e)}`);
     }
     const blob = await client2.getArtifact(hash);
     if (!(blob instanceof Uint8Array))
-      die5(`fs diff: [${blob.error}] ${blob.detail}${blob.hint ? " — " + blob.hint : ""}`);
+      die6(`fs diff: [${blob.error}] ${blob.detail}${blob.hint ? " — " + blob.hint : ""}`);
     if (!isValidUtf8Bytes(new Uint8Array(localBytes)) || !isValidUtf8Bytes(blob)) {
-      ok6(`binary differs: ${localBytes.length}b vs ${blob.length}b`);
+      ok7(`binary differs: ${localBytes.length}b vs ${blob.length}b`);
       return;
     }
     const mineText = localBytes.toString("utf8");
     const tipText = Buffer.from(blob).toString("utf8");
     const sidecar = readSidecar(client2.roomId, norm, home);
     if (!sidecar)
-      ok6("(no sync base — comparing mine vs tip only)");
+      ok7("(no sync base — comparing mine vs tip only)");
     if (showBase && sidecar) {
       if (sidecar.content === undefined) {
-        ok6("(sidecar stores hash only — base text not cached locally; comparing mine vs tip only)");
+        ok7("(sidecar stores hash only — base text not cached locally; comparing mine vs tip only)");
       } else {
-        ok6("# base -> mine");
-        ok6(unifiedDiff(sidecar.content, mineText, "base", "mine"));
-        ok6("# base -> tip");
-        ok6(unifiedDiff(sidecar.content, tipText, "base", "tip"));
+        ok7("# base -> mine");
+        ok7(unifiedDiff(sidecar.content, mineText, "base", "mine"));
+        ok7("# base -> tip");
+        ok7(unifiedDiff(sidecar.content, tipText, "base", "tip"));
         return;
       }
     }
-    ok6(unifiedDiff(mineText, tipText, "mine", "tip"));
+    ok7(unifiedDiff(mineText, tipText, "mine", "tip"));
   }
 };
 async function cmdFs(args2) {
   const sub = args2.positional.shift();
   const handler = sub ? FS_CMDS[sub] : undefined;
   if (!handler) {
-    die5(`usage: mesh fs put <path> [--as <repopath>] [--strict] [--prune-ignored] [--verbose] [--stop-on-error] [--json] | ls [<prefix>] [-f] [--into <dir>] | get <repopath> [--into <dir>] [--prune] [--json] | rm <repopath> | edit <path> [--into <dir>] | lock <path> | unlock <path> | grep <query> [--prefix <path-prefix>] [--limit <n>] [--hydrate [--into <dir>]] | hydrate [<prefix>] [--into <dir>] [--prune] | grant <subject> <path> <grade> | grants | revoke <subject> <path> | role <participant> <role> | roles | role-rm <participant> <role> | leases | config <open|closed> | deps <path> | request <path> [--grade read] | status [<prefix>] [--deep] [--porcelain] [--root <dir>] | diff <path> [--base] [--root <dir>]
+    die6(`usage: mesh fs put <path> [--as <repopath>] [--strict] [--prune-ignored] [--verbose] [--stop-on-error] [--json] | ls [<prefix>] [-f] [--into <dir>] | get <repopath> [--into <dir>] [--prune] [--json] | rm <repopath> | edit <path> [--into <dir>] | lock <path> | unlock <path> | grep <query> [--prefix <path-prefix>] [--limit <n>] [--hydrate [--into <dir>]] | hydrate [<prefix>] [--into <dir>] [--prune] | grant <subject> <path> <grade> | grants | revoke <subject> <path> | role <participant> <role> | roles | role-rm <participant> <role> | leases | config <open|closed> | deps <path> | request <path> [--grade read] | status [<prefix>] [--deep] [--porcelain] [--root <dir>] | diff <path> [--base] [--root <dir>]
   write policy by extension: code (.ts .js .py .go .rs …) -> merge on \`put\` · prose (.md .txt) -> shared CRDT via \`edit\` · opt-in serialize: \`lock\`/\`unlock\`
   grades: discover < read < write < exclusive`);
   }
-  const home = flag5(args2, "home");
-  const roomArg = flag5(args2, "room");
+  const home = flag6(args2, "home");
+  const roomArg = flag6(args2, "room");
   const { roomId, entry: room } = resolveRoom(roomArg, home);
   const identity = loadIdentityWithSecret(home);
   if (!identity)
-    die5('No identity. Run "mesh keygen" first.');
+    die6('No identity. Run "mesh keygen" first.');
   const client2 = new MeshClient({
     roomUrl: room.url,
     token: room.token,
@@ -13455,12 +13538,12 @@ async function cmdFs(args2) {
 }
 async function cmdDecide(args2) {
   const sub = args2.positional.shift();
-  const home = flag5(args2, "home");
-  const roomArg = flag5(args2, "room");
+  const home = flag6(args2, "home");
+  const roomArg = flag6(args2, "room");
   const { roomId, entry: room } = resolveRoom(roomArg, home);
   const identity = loadIdentityWithSecret(home);
   if (!identity)
-    die5('No identity. Run "mesh keygen" first.');
+    die6('No identity. Run "mesh keygen" first.');
   const client2 = new MeshClient({
     roomUrl: room.url,
     token: room.token,
@@ -13470,7 +13553,7 @@ async function cmdDecide(args2) {
   });
   const handler = sub ? DECIDE_CMDS[sub] : undefined;
   if (!handler) {
-    die5("usage: mesh decide wait-report [--since <ISO>] [--human <id[,id...]>]");
+    die6("usage: mesh decide wait-report [--since <ISO>] [--human <id[,id...]>]");
   }
   await handler(client2, args2, identity.id);
 }
@@ -13480,12 +13563,12 @@ function claimStateMarkers(claim, selfId, nowMs) {
   return `${stalled}${rejected}`;
 }
 async function cmdDoctor(args2) {
-  const home = flag5(args2, "home");
-  const roomArg = flag5(args2, "room");
+  const home = flag6(args2, "home");
+  const roomArg = flag6(args2, "room");
   const { roomId, entry: room } = resolveRoom(roomArg, home);
   const identity = loadIdentityWithSecret(home);
   if (!identity)
-    die5('No identity. Run "mesh keygen" first.');
+    die6('No identity. Run "mesh keygen" first.');
   const client2 = new MeshClient({
     roomUrl: room.url,
     token: room.token,
@@ -13493,16 +13576,16 @@ async function cmdDoctor(args2) {
     roomId,
     secretBytes: identity.secretBytes
   });
-  const root = resolve4(flag5(args2, "root") ?? ".");
+  const root = resolve4(flag6(args2, "root") ?? ".");
   await runDoctor(client2, args2, { root, home });
 }
 async function cmdState(args2) {
-  const home = flag5(args2, "home");
-  const roomArg = flag5(args2, "room");
+  const home = flag6(args2, "home");
+  const roomArg = flag6(args2, "room");
   const { roomId, entry: room } = resolveRoom(roomArg, home);
   const identity = loadIdentityWithSecret(home);
   if (!identity)
-    die5('No identity. Run "mesh keygen" first.');
+    die6('No identity. Run "mesh keygen" first.');
   const client2 = new MeshClient({
     roomUrl: room.url,
     token: room.token,
@@ -13511,21 +13594,21 @@ async function cmdState(args2) {
     secretBytes: identity.secretBytes
   });
   const state = await client2.getState();
-  ok6(renderStateHeader(state.head));
-  ok6("");
-  ok6("Claims:");
+  ok7(renderStateHeader(state.head));
+  ok7("");
+  ok7("Claims:");
   if (state.claims.length === 0) {
-    ok6("  (none)");
+    ok7("  (none)");
   } else {
     for (const claim of state.claims) {
       const holder = claim.holder ? `  holder=${claim.holder}` : "";
       const lease = claim.lease_expires ? `  lease=${claim.lease_expires}` : "";
       const markers = claimStateMarkers(claim, identity.id, Date.now());
-      ok6(`  ${claim.task_ref}  ${claim.state}${holder}${lease}${markers}`);
+      ok7(`  ${claim.task_ref}  ${claim.state}${holder}${lease}${markers}`);
     }
   }
-  ok6("");
-  ok6("Roster:");
+  ok7("");
+  ok7("Roster:");
   const rosterRows = state.roster.map((p) => ({
     participant_id: p.participant_id,
     roles: p.roles,
@@ -13539,15 +13622,15 @@ async function cmdState(args2) {
     retired_seq: p.retired_seq,
     pubkey: p.pubkey
   }));
-  ok6(renderRoster(rosterRows));
-  ok6("");
-  ok6("Bindings:");
+  ok7(renderRoster(rosterRows));
+  ok7("");
+  ok7("Bindings:");
   const stateBindings = state.bindings ?? [];
   if (stateBindings.length === 0) {
-    ok6("  (none)");
+    ok7("  (none)");
   } else {
     for (const b of stateBindings) {
-      ok6(`  ${scrubControl(b.participant)}  ${scrubControl(b.role)}  ${fmtWindow(b.active_from, b.active_until)}  in_window=${b.in_window}`);
+      ok7(`  ${scrubControl(b.participant)}  ${scrubControl(b.role)}  ${fmtWindow(b.active_from, b.active_until)}  in_window=${b.in_window}`);
     }
   }
 }
@@ -13557,15 +13640,15 @@ function buildWatchPredicate(args2) {
     const taskRef = args2.positional[1];
     const state = args2.positional[2];
     if (!taskRef || !state)
-      die5("watch task: usage: mesh watch task <task_ref> <STATE>");
+      die6("watch task: usage: mesh watch task <task_ref> <STATE>");
     return { kind: "task_state", task_ref: taskRef, to: state };
   } else if (subCmd === "entry") {
-    const perf = flag5(args2, "performative");
-    const thread = flag5(args2, "thread");
-    const mentionMe = flagBool3(args2, "mention-me");
-    const path4 = flag5(args2, "path");
-    const participant = flag5(args2, "participant");
-    const taskRef = flag5(args2, "task-ref");
+    const perf = flag6(args2, "performative");
+    const thread = flag6(args2, "thread");
+    const mentionMe = flagBool4(args2, "mention-me");
+    const path4 = flag6(args2, "path");
+    const participant = flag6(args2, "participant");
+    const taskRef = flag6(args2, "task-ref");
     return {
       kind: "entry",
       ...perf !== undefined ? { performative: perf } : {},
@@ -13576,15 +13659,15 @@ function buildWatchPredicate(args2) {
       ...taskRef !== undefined ? { task_ref: taskRef } : {}
     };
   }
-  die5('watch: sub-command must be "task" or "entry"');
+  die6('watch: sub-command must be "task" or "entry"');
 }
 async function cmdWatch(args2) {
-  const home = flag5(args2, "home");
-  const roomArg = flag5(args2, "room");
+  const home = flag6(args2, "home");
+  const roomArg = flag6(args2, "room");
   const { roomId, entry: room } = resolveRoom(roomArg, home);
   const identity = loadIdentityWithSecret(home);
   if (!identity)
-    die5('No identity. Run "mesh keygen" first.');
+    die6('No identity. Run "mesh keygen" first.');
   const predicate = buildWatchPredicate(args2);
   const client2 = new MeshClient({
     roomUrl: room.url,
@@ -13595,37 +13678,37 @@ async function cmdWatch(args2) {
   });
   const result = await client2.postWatch(predicate);
   if (!result.ok)
-    die5(`watch failed: [${result.error}] ${result.detail}`);
-  ok6(`Watch registered: ${result.watch_id}`);
+    die6(`watch failed: [${result.error}] ${result.detail}`);
+  ok7(`Watch registered: ${result.watch_id}`);
 }
 async function cmdWhoami(args2) {
-  const home = flag5(args2, "home");
+  const home = flag6(args2, "home");
   const identity = loadIdentity(home);
   if (!identity)
-    die5('No identity. Run "mesh keygen --id <id>" first.');
+    die6('No identity. Run "mesh keygen --id <id>" first.');
   const h2 = home ?? meshHome();
-  ok6(`id:     ${identity.id}`);
-  ok6(`pubkey: ${identity.pubkey}`);
+  ok7(`id:     ${identity.id}`);
+  ok7(`pubkey: ${identity.pubkey}`);
   if (identity.roles && identity.roles.length > 0)
-    ok6(`roles:  ${identity.roles.join(", ")}`);
-  ok6(`home:   ${h2}  (config dir — set MESH_HOME or --home to change)`);
-  ok6(`        holds identity.json · rooms.json · active_room`);
+    ok7(`roles:  ${identity.roles.join(", ")}`);
+  ok7(`home:   ${h2}  (config dir — set MESH_HOME or --home to change)`);
+  ok7(`        holds identity.json · rooms.json · active_room`);
   const rooms = loadRooms(home);
   const roomIds = Object.keys(rooms);
   if (roomIds.length > 0) {
     const active = getActiveRoom(home);
-    ok6(`rooms:  ${roomIds.map((r) => r === active ? `${r} (active)` : r).join(", ")}`);
+    ok7(`rooms:  ${roomIds.map((r) => r === active ? `${r} (active)` : r).join(", ")}`);
   }
 }
 async function cmdInbox(args2) {
-  const sinceStr = flag5(args2, "since");
-  const mark = flagBool3(args2, "mark");
-  const home = flag5(args2, "home");
-  const roomArg = flag5(args2, "room");
+  const sinceStr = flag6(args2, "since");
+  const mark = flagBool4(args2, "mark");
+  const home = flag6(args2, "home");
+  const roomArg = flag6(args2, "room");
   const { roomId, entry: room } = resolveRoom(roomArg, home);
   const identity = loadIdentityWithSecret(home);
   if (!identity)
-    die5('No identity. Run "mesh keygen" first.');
+    die6('No identity. Run "mesh keygen" first.');
   const client2 = new MeshClient({
     roomUrl: room.url,
     token: room.token,
@@ -13638,17 +13721,17 @@ async function cmdInbox(args2) {
     opts.since = parseInt(sinceStr, 10);
   const [result, state] = await Promise.all([client2.getEntries(opts), client2.getState().catch(() => null)]);
   if (result.entries.length === 0 && result.notifies.length === 0) {
-    ok6("(inbox empty)");
+    ok7("(inbox empty)");
   } else {
     if (result.entries.length > 0)
-      ok6(renderInboxDigest(result.entries));
+      ok7(renderInboxDigest(result.entries));
     for (const n of result.notifies) {
-      ok6(`  notify  watch=${n.watch_id}  entry_seq=${n.entry_seq}`);
+      ok7(`  notify  watch=${n.watch_id}  entry_seq=${n.entry_seq}`);
     }
   }
-  ok6(renderStateHeader(result.head));
+  ok7(renderStateHeader(result.head));
   if (mark)
-    ok6("(read cursor advanced)");
+    ok7("(read cursor advanced)");
   const badge = composeBadge({
     unread: result.entries.length,
     fsBehind: 0,
@@ -13656,7 +13739,7 @@ async function cmdInbox(args2) {
     openDecisions: state !== null ? openDecisionsCount(state, identity.id) : 0
   });
   if (badge !== null)
-    ok6(badge);
+    ok7(badge);
   process.exitCode = inboxExitCode(result.entries.length, result.notifies.length);
 }
 function inboxExitCode(entryCount, notifyCount) {
@@ -13691,6 +13774,7 @@ room:
 messaging:
   log [-f] [--all]                                          Show room log — collab lane by default (file.* / system.* entries hidden; use --all for the full log, or 'fs log' for the file plane). -f: follow
   chat                                                      Live stream + interactive post
+  open [--read-only] [--print]                              Open the room's web view in a browser (write link signs as your identity; --read-only omits the key)
   post <body> [--body <s>] [--thread <t>]                   Post a request entry (--body is the non-positional form)
 
 tasks:
@@ -13763,7 +13847,7 @@ function usageText() {
   return USAGE;
 }
 function usage() {
-  ok6(USAGE);
+  ok7(USAGE);
 }
 function expandHome(p) {
   return p.startsWith("~/") ? os3.homedir() + p.slice(1) : p;
@@ -13776,13 +13860,13 @@ async function cmdIdentity(args2) {
     case "copy":
       return cmdIdentityCopy(args2);
     default:
-      die5(`identity: unknown action "${sub ?? ""}". Use: mesh identity list|copy`);
+      die6(`identity: unknown action "${sub ?? ""}". Use: mesh identity list|copy`);
   }
 }
 function cmdIdentityList() {
   const homes = listIdentityHomes();
   if (homes.length === 0) {
-    ok6('No identities under ~/.mesh*. Run "mesh keygen --id <id>".');
+    ok7('No identities under ~/.mesh*. Run "mesh keygen --id <id>".');
     return;
   }
   const current = process.env["MESH_HOME"] ?? meshHome();
@@ -13792,42 +13876,42 @@ function cmdIdentityList() {
     set.add(identity.pubkey);
     keysById.set(identity.id, set);
   }
-  ok6(`Local identities (~/.mesh*) — current MESH_HOME: ${current}`);
+  ok7(`Local identities (~/.mesh*) — current MESH_HOME: ${current}`);
   for (const { home, identity } of homes) {
     const mark = home === current ? "*" : " ";
     const dupe = (keysById.get(identity.id)?.size ?? 1) > 1 ? "  ⚠ id reused with a different key" : "";
-    ok6(`${mark} ${home}`);
-    ok6(`    ${identity.id}  ${identity.pubkey}${dupe}`);
+    ok7(`${mark} ${home}`);
+    ok7(`    ${identity.id}  ${identity.pubkey}${dupe}`);
   }
   const collided = [...keysById.entries()].filter(([, s]) => s.size > 1).map(([id2]) => id2);
   if (collided.length > 0) {
-    ok6(``);
-    ok6(`⚠ Same id, different keypairs: ${collided.join(", ")}. A room trusts only the FIRST key an id`);
-    ok6(`  used (trust-on-first-use); the others hit id_taken on join. Reconcile into one identity:`);
-    ok6(`    mesh identity copy --from <home-that-owns-the-room> --to <other-home> --force`);
+    ok7(``);
+    ok7(`⚠ Same id, different keypairs: ${collided.join(", ")}. A room trusts only the FIRST key an id`);
+    ok7(`  used (trust-on-first-use); the others hit id_taken on join. Reconcile into one identity:`);
+    ok7(`    mesh identity copy --from <home-that-owns-the-room> --to <other-home> --force`);
   }
 }
 async function cmdIdentityCopy(args2) {
-  const fromArg = flag5(args2, "from");
-  const toArg = flag5(args2, "to");
+  const fromArg = flag6(args2, "from");
+  const toArg = flag6(args2, "to");
   if (!fromArg || !toArg)
-    die5("identity copy: usage: mesh identity copy --from <home> --to <home> [--force]");
+    die6("identity copy: usage: mesh identity copy --from <home> --to <home> [--force]");
   const from2 = expandHome(fromArg);
   const to = expandHome(toArg);
   if (from2 === to)
-    die5("identity copy: --from and --to are the same home");
+    die6("identity copy: --from and --to are the same home");
   const src = loadIdentity(from2);
   if (!src)
-    die5(`identity copy: no identity.json in ${from2}`);
+    die6(`identity copy: no identity.json in ${from2}`);
   const dst = loadIdentity(to);
-  if (dst && !flagBool3(args2, "force")) {
-    die5(`identity copy: ${to} already has identity "${dst.id}" (${dst.pubkey}). Use --force to overwrite.`);
+  if (dst && !flagBool4(args2, "force")) {
+    die6(`identity copy: ${to} already has identity "${dst.id}" (${dst.pubkey}). Use --force to overwrite.`);
   }
   saveIdentity(src, to);
-  ok6(`Copied identity → ${to}`);
-  ok6(`  ${src.id}  ${src.pubkey}`);
-  ok6(`Both homes now share ONE keypair (local-testing only — they are now the SAME participant,`);
-  ok6(`not isolated agents). Use separate keygen'd identities for anything real.`);
+  ok7(`Copied identity → ${to}`);
+  ok7(`  ${src.id}  ${src.pubkey}`);
+  ok7(`Both homes now share ONE keypair (local-testing only — they are now the SAME participant,`);
+  ok7(`not isolated agents). Use separate keygen'd identities for anything real.`);
 }
 async function main() {
   const argv = process.argv.slice(2);
@@ -13836,19 +13920,19 @@ async function main() {
     return;
   }
   if (wantsVersion(argv)) {
-    ok6(`mesh v${getVersion()}`);
+    ok7(`mesh v${getVersion()}`);
     return;
   }
   const args2 = parseArgs(argv, FLAG_ARITY);
   const specKey = specKeyFor(args2.positional);
   const flagErr = validateFlags(specKey, args2);
   if (flagErr !== null)
-    die5(flagErr);
+    die6(flagErr);
   const posErr = validatePositionals(specKey, args2);
   if (posErr !== null)
-    die5(posErr);
-  if (!flag5(args2, "home")) {
-    args2.flags["home"] = resolveProfileHome(flag5(args2, "profile"));
+    die6(posErr);
+  if (!flag6(args2, "home")) {
+    args2.flags["home"] = resolveProfileHome(flag6(args2, "profile"));
   }
   const cmd = args2.positional.shift();
   switch (cmd) {
@@ -13866,6 +13950,8 @@ async function main() {
       return cmdLog(args2);
     case "chat":
       return cmdChat(args2);
+    case "open":
+      return cmdOpen(args2);
     case "post":
       return cmdPost(args2);
     case "announce":
@@ -13907,14 +13993,14 @@ async function main() {
     case "doctor":
       return cmdDoctor(args2);
     case "version":
-      ok6(`mesh v${getVersion()}`);
+      ok7(`mesh v${getVersion()}`);
       return;
     case "use": {
       const name = args2.positional.shift();
       if (!name)
-        die5("use: <profile-name> is required");
+        die6("use: <profile-name> is required");
       setActiveProfile(name);
-      ok6(`Active profile set to "${name}".`);
+      ok7(`Active profile set to "${name}".`);
       return;
     }
     case "profile": {
@@ -13922,15 +14008,15 @@ async function main() {
       if (sub === "list") {
         const profiles = listProfiles();
         if (profiles.length === 0) {
-          ok6("No profiles. Create one with: mesh use <name>");
+          ok7("No profiles. Create one with: mesh use <name>");
           return;
         }
         const active = getActiveProfile();
         for (const p of profiles)
-          ok6(`${p === active ? "*" : " "} ${p}`);
+          ok7(`${p === active ? "*" : " "} ${p}`);
         return;
       }
-      die5(`profile: unknown subcommand "${sub ?? ""}". Available: list`);
+      die6(`profile: unknown subcommand "${sub ?? ""}". Available: list`);
       return;
     }
     case "help":
@@ -13940,8 +14026,8 @@ async function main() {
     default: {
       const roomSubs = ["rm", "delete", "list", "create", "join", "remove", "forget"];
       if (cmd && roomSubs.includes(cmd))
-        die5(`Unknown command: ${cmd}. Did you mean "mesh room ${cmd}"?`);
-      die5(`Unknown command: ${cmd}. Run "mesh help" for usage.`);
+        die6(`Unknown command: ${cmd}. Did you mean "mesh room ${cmd}"?`);
+      die6(`Unknown command: ${cmd}. Run "mesh help" for usage.`);
     }
   }
 }

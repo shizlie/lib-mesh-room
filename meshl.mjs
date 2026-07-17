@@ -14963,6 +14963,8 @@ var ROOM_ONLY = {
   "system.checkpoint": true
 };
 var PARTICIPANT_PERFORMATIVES = Object.keys(PERFORMATIVE_SET).filter((p) => !(p in ROOM_ONLY));
+// ../proto/src/composer.ts
+var GRADES = Object.keys(GRADE_ORDER);
 // ../proto/src/machine.ts
 var MAX_DURATION_S = 30 * 24 * 60 * 60;
 // ../proto/src/decisions.ts
@@ -31446,6 +31448,7 @@ var COMMAND_SPEC = {
   "room log": { flags: ["f", "all"], max: 0, names: [] },
   log: { flags: ["f", "all"], max: 0, names: [] },
   chat: { flags: [], max: 0, names: [] },
+  open: { flags: ["read-only", "print"], max: 0, names: [] },
   post: { flags: ["body", "thread"], max: 1, names: ["body"] },
   announce: { flags: ["body", "verdict-by", "claim-window-s", "lease-ttl-s", "max-claim-s", "depends-on"], max: 1, names: ["task_ref"] },
   claim: { flags: ["body", "artifact"], max: 1, names: ["task_ref"] },
@@ -31546,7 +31549,7 @@ import { dirname as dirname3, resolve as resolve2 } from "node:path";
 import { fileURLToPath } from "node:url";
 function getVersion() {
   if (true)
-    return "1.25.0";
+    return "1.26.0";
   try {
     const here = dirname3(fileURLToPath(import.meta.url));
     return readFileSync9(resolve2(here, "../../../VERSION"), "utf8").trim();

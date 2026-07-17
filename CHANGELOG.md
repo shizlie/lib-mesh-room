@@ -3,6 +3,61 @@
 All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.26.0] — 2026-07-17
+
+### Added
+
+- **The room web view grew a conversation: a live feed pane + a chat composer**
+  (Intent S, `CONTEXT.md §27`). The `/room/:room/:cred` page now shows, next to
+  the file tree, the room's entry log (backfilled from genesis, live over the
+  same WS `/stream` every client uses) with the collab-lane filter applied by
+  default — `file.*`/`system.*` entries hidden behind a "show system" toggle,
+  sharing the CLI's exact `COLLAB_LANE_EXCLUDE` list (now exported from
+  `@mesh/proto`). Members can post free-text messages (`request`) or fill in a
+  performative template — announce/claim/deliver/signal/decide/… — driven by the
+  new `COMPOSER_SPEC` table in `@mesh/proto`, drift-tested against §3 wire
+  validation. The browser signs submissions with the participant key like any
+  other client; the public (pubkey) view never renders the conversation pane.
+- **`mesh open [--read-only] [--print]`** — open the active room's web view in
+  a browser using the locally stored credentials. The write link carries the
+  identity secret in the URL *fragment* (`#k=…`, never sent to any server); the
+  page strips it from the address bar on load and keeps it memory-only.
+  `--read-only` omits the key, `--print` prints the URL instead of spawning a
+  browser. Successor path (delegated bearer capabilities) tracked in TODOS.
+- **The room-view page is now CSP-locked and bundle-driven.** The HTML shell
+  ships no inline script (`script-src 'self'`); all behavior lives in a
+  browser bundle built from `packages/room/web/` (`bun run build:web`), served
+  content-addressed at `/room-assets/app.js?v=<src-hash>` (immutable caching,
+  `no-cache` shell) with a freshness drift test guarding the checked-in
+  generated module.
+
+### Fixed
+
+- **`mesh room create` no longer trusts the server-echoed `room_url` for the
+  owner auto-join.** Behind a custom-domain route, `wrangler dev` echoes the
+  production host, so a local `--url http://localhost:8787` create would send
+  the owner's join secret + challenge signature to production and persist a
+  rooms.json entry pointing at the wrong deployment. The origin actually
+  reached is now authoritative for the join and the stored room URL.
+- **`collectAllEntries` skipped seq 0.** The `GET /entries` `since` cursor is
+  exclusive; pagination now starts at `-1` (matching `fetchLogEntries`), so
+  genesis is included.
+- **Pre-landing hardening (ship review army findings).** `mesh open` refuses a
+  local identity that doesn't match the room's joined participant, and a
+  missing platform browser-opener no longer crashes Node with the
+  secret-bearing URL in the error dump (handled, sanitized message). The room
+  view's asset ETag and `?v=` cache-buster now hash the SERVED bundle bytes
+  (not the source tree), so the immutable cache key provably identifies the
+  response body; the shell adds `Referrer-Policy: no-referrer` and the CSP
+  gains `frame-ancestors 'none'; base-uri 'none'`. The feed pane renders the
+  backfill in one pass, appends live rows without a full rebuild, bounds
+  retained entries, and surfaces backfill failures instead of an unhandled
+  rejection; the composer disables inputs while a post is in flight and
+  surfaces rejected requests. A malformed `#k=` fragment degrades to
+  read-only instead of aborting the page. The `file.*`/`system.*` wildcard
+  matcher is now defined once in `@mesh/proto` and shared by the room's
+  SQL/WS filters and the feed's client-side toggle.
+
 ## [1.25.0] — 2026-07-17
 
 ### Changed
