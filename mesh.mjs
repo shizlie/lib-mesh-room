@@ -5001,10 +5001,9 @@ var DIM2 = "\x1B[2m";
 var RESET2 = "\x1B[0m";
 
 // src/main.ts
-import { readFileSync as readFileSync7, statSync as statSync2, existsSync as existsSync4 } from "node:fs";
+import { readFileSync as readFileSync8, statSync as statSync2, existsSync as existsSync4 } from "node:fs";
 import * as os3 from "node:os";
-import { resolve as resolve3, join as join7, dirname as dirname6, sep as sep3 } from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolve as resolve4, join as join7, sep as sep3 } from "node:path";
 
 // src/deps.ts
 import { dirname as dirname4, join as join5, normalize } from "node:path";
@@ -11407,8 +11406,8 @@ async function cmdBrief(args2) {
   ok5(ownerAuthorityPostureWarning(state, identity.id) + renderBrief(input));
 }
 
-// src/main.ts
-function parseArgs(argv) {
+// src/flags.ts
+function parseArgs(argv, arity) {
   const positional = [];
   const flags = {};
   let i = 0;
@@ -11416,27 +11415,28 @@ function parseArgs(argv) {
     const arg = argv[i];
     if (arg.startsWith("--")) {
       const eq = arg.indexOf("=");
-      let key;
-      let inlineVal;
       if (eq !== -1) {
-        key = arg.slice(2, eq);
-        inlineVal = arg.slice(eq + 1);
-      } else {
-        key = arg.slice(2);
-        inlineVal = undefined;
-      }
-      if (inlineVal !== undefined) {
-        flags[key] = inlineVal;
+        flags[arg.slice(2, eq)] = arg.slice(eq + 1);
         i++;
-      } else {
-        const next = argv[i + 1];
-        if (next !== undefined && !next.startsWith("-")) {
+        continue;
+      }
+      const key = arg.slice(2);
+      const next = argv[i + 1];
+      const kind = arity[key];
+      if (kind === "boolean") {
+        flags[key] = true;
+        i++;
+      } else if (kind === "value") {
+        if (next !== undefined && !next.startsWith("--")) {
           flags[key] = next;
           i += 2;
         } else {
           flags[key] = true;
           i++;
         }
+      } else {
+        flags[key] = true;
+        i++;
       }
     } else if (arg.length > 1 && arg.startsWith("-") && !arg.startsWith("--")) {
       flags[arg.slice(1)] = true;
@@ -11447,6 +11447,220 @@ function parseArgs(argv) {
     }
   }
   return { positional, flags };
+}
+var GLOBAL_CLI_FLAGS = [
+  "home",
+  "profile",
+  "url",
+  "room",
+  "json",
+  "help",
+  "h",
+  "version",
+  "V"
+];
+var GROUP_COMMANDS = new Set(["fs", "room", "identity", "key", "profile", "decide", "watch"]);
+function specKeyFor(positional) {
+  const p0 = positional[0] ?? "";
+  if (GROUP_COMMANDS.has(p0) && positional[1] !== undefined)
+    return `${p0} ${positional[1]}`;
+  return p0;
+}
+var COMMAND_SPEC = {
+  init: { flags: [], max: 0, names: [] },
+  keygen: { flags: ["id", "roles", "force"], max: 0, names: [] },
+  use: { flags: [], max: 1, names: ["profile-name"] },
+  "profile list": { flags: [], max: 0, names: [] },
+  whoami: { flags: [], max: 0, names: [] },
+  "identity list": { flags: [], max: 0, names: [] },
+  "identity copy": { flags: ["from", "to", "force"], max: 0, names: [] },
+  "key rotate": { flags: [], max: 0, names: [] },
+  "key retire": { flags: [], max: 0, names: [] },
+  "room create": { flags: ["owner", "host"], max: 1, names: ["room_id"] },
+  "room join": { flags: ["passphrase", "host"], max: 2, names: ["room-url", "room-or-invite"] },
+  "room invite": { flags: ["show", "rotate", "for", "passphrase", "ttl", "list", "revoke"], max: 1, names: ["room_id"] },
+  "room list": { flags: [], max: 0, names: [] },
+  "room rm": { flags: [], max: 1, names: ["room_id"] },
+  "room delete": { flags: [], max: 1, names: ["room_id"] },
+  "room log": { flags: ["f", "all"], max: 0, names: [] },
+  log: { flags: ["f", "all"], max: 0, names: [] },
+  chat: { flags: [], max: 0, names: [] },
+  post: { flags: ["body", "thread"], max: 1, names: ["body"] },
+  announce: { flags: ["body", "verdict-by", "claim-window-s", "lease-ttl-s", "max-claim-s", "depends-on"], max: 1, names: ["task_ref"] },
+  claim: { flags: ["body", "artifact"], max: 1, names: ["task_ref"] },
+  release: { flags: ["body", "artifact"], max: 1, names: ["task_ref"] },
+  deliver: { flags: ["dir", "artifact", "body"], max: 1, names: ["task_ref"] },
+  accept: { flags: ["body", "artifact"], max: 1, names: ["task_ref"] },
+  reject: { flags: ["body", "artifact"], max: 1, names: ["task_ref"] },
+  inform: { flags: ["body", "artifact"], max: 1, names: ["task_ref"] },
+  ack: { flags: [], max: 1, names: ["escalate_seq"] },
+  fetch: { flags: ["into"], max: 1, names: ["task-or-hash"] },
+  "watch task": { flags: [], max: 2, names: ["task_ref", "STATE"] },
+  "watch entry": { flags: ["performative", "thread", "mention-me", "path", "participant", "task-ref"], max: 0, names: [] },
+  "fs put": { flags: ["as", "all", "strict", "prune-ignored", "verbose", "v", "stop-on-error"], max: 1, names: ["path"] },
+  "fs ls": { flags: ["f", "into", "root"], max: 1, names: ["prefix"] },
+  "fs get": { flags: ["into", "root", "prune"], max: 1, names: ["repopath"] },
+  "fs rm": { flags: ["r", "recursive"], max: 1, names: ["repopath"] },
+  "fs edit": { flags: ["into", "root"], max: 1, names: ["path"] },
+  "fs lock": { flags: [], max: 1, names: ["path"] },
+  "fs unlock": { flags: [], max: 1, names: ["path"] },
+  "fs grep": { flags: ["prefix", "limit", "hydrate", "into", "root"], max: 1, names: ["query"] },
+  "fs log": { flags: ["f"], max: 0, names: [] },
+  "fs hydrate": { flags: ["into", "root", "prune"], max: 1, names: ["prefix"] },
+  "fs grant": { flags: [], max: 3, names: ["subject", "path", "grade"] },
+  "fs grants": { flags: [], max: 0, names: [] },
+  "fs revoke": { flags: [], max: 2, names: ["subject", "path"] },
+  "fs role": { flags: ["replaces", "depth", "from", "until", "override"], max: 2, names: ["participant", "role"] },
+  "fs roles": { flags: [], max: 0, names: [] },
+  "fs role-rm": { flags: [], max: 2, names: ["participant", "role"] },
+  "fs leases": { flags: [], max: 0, names: [] },
+  "fs config": { flags: [], max: 2, names: ["setting", "value"] },
+  "fs deps": { flags: [], max: 1, names: ["path"] },
+  "fs request": { flags: ["grade"], max: 1, names: ["path"] },
+  "fs status": { flags: ["deep", "porcelain", "root"], max: 1, names: ["prefix"] },
+  "fs diff": { flags: ["base", "root"], max: 1, names: ["path"] },
+  state: { flags: [], max: 0, names: [] },
+  inbox: { flags: ["since", "mark"], max: 0, names: [] },
+  brief: { flags: [], max: 0, names: [] },
+  doctor: { flags: ["porcelain", "root"], max: 0, names: [] },
+  "decide ask": { flags: ["by", "deadline", "fallback-note", "ref"], max: 1, names: ["question"] },
+  "decide answer": { flags: ["resolution"], max: 1, names: ["decision-id"] },
+  "decide list": { flags: ["mine", "role"], max: 0, names: [] },
+  "decide show": { flags: [], max: 1, names: ["decision-id"] },
+  "decide wait-report": { flags: ["since", "human"], max: 0, names: [] },
+  version: { flags: [], max: 0, names: [] }
+};
+var ALIAS_OF = {
+  "room remove": "room rm",
+  "room forget": "room rm",
+  "create-room": "room create",
+  join: "room join"
+};
+for (const [alias, target] of Object.entries(ALIAS_OF))
+  COMMAND_SPEC[alias] = COMMAND_SPEC[target];
+var FLAG_ARITY = {
+  home: "value",
+  profile: "value",
+  url: "value",
+  room: "value",
+  json: "boolean",
+  help: "boolean",
+  h: "boolean",
+  version: "boolean",
+  V: "boolean",
+  id: "value",
+  roles: "value",
+  force: "boolean",
+  from: "value",
+  to: "value",
+  owner: "value",
+  host: "value",
+  passphrase: "value",
+  show: "boolean",
+  rotate: "boolean",
+  for: "value",
+  ttl: "value",
+  list: "boolean",
+  revoke: "value",
+  f: "boolean",
+  all: "boolean",
+  body: "value",
+  thread: "value",
+  "verdict-by": "value",
+  "claim-window-s": "value",
+  "lease-ttl-s": "value",
+  "max-claim-s": "value",
+  "depends-on": "value",
+  artifact: "value",
+  dir: "value",
+  into: "value",
+  performative: "value",
+  "mention-me": "boolean",
+  path: "value",
+  participant: "value",
+  "task-ref": "value",
+  as: "value",
+  strict: "boolean",
+  "prune-ignored": "boolean",
+  verbose: "boolean",
+  v: "boolean",
+  "stop-on-error": "boolean",
+  root: "value",
+  prune: "boolean",
+  r: "boolean",
+  recursive: "boolean",
+  prefix: "value",
+  limit: "value",
+  hydrate: "boolean",
+  replaces: "value",
+  depth: "value",
+  until: "value",
+  override: "boolean",
+  grade: "value",
+  deep: "boolean",
+  porcelain: "boolean",
+  base: "boolean",
+  since: "value",
+  mark: "boolean",
+  by: "value",
+  deadline: "value",
+  "fallback-note": "value",
+  ref: "value",
+  resolution: "value",
+  mine: "boolean",
+  role: "value",
+  human: "value"
+};
+function nearestFlag(name, allowed) {
+  let best = null;
+  let bestDistance = 3;
+  for (const candidate of allowed) {
+    const dp = Array.from({ length: name.length + 1 }, (_, i) => [i, ...Array(candidate.length).fill(0)]);
+    for (let j = 1;j <= candidate.length; j++)
+      dp[0][j] = j;
+    for (let i = 1;i <= name.length; i++) {
+      for (let j = 1;j <= candidate.length; j++) {
+        dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + (name[i - 1] === candidate[j - 1] ? 0 : 1));
+      }
+    }
+    const distance = dp[name.length][candidate.length];
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = candidate;
+    }
+  }
+  return best;
+}
+function validateAgainst(allowed, arity, args2) {
+  for (const [key, value] of Object.entries(args2.flags)) {
+    if (!allowed.includes(key)) {
+      const hint = nearestFlag(key, allowed);
+      return `unknown flag --${key}${hint !== null ? ` (did you mean --${hint}?)` : ""}`;
+    }
+    if (arity[key] === "value" && value === true)
+      return `--${key} requires a value`;
+    if (arity[key] === "boolean" && typeof value === "string")
+      return `--${key} takes no value`;
+  }
+  return null;
+}
+function validateFlags(specKey, args2) {
+  const spec = COMMAND_SPEC[specKey];
+  if (spec === undefined)
+    return null;
+  const core = validateAgainst([...GLOBAL_CLI_FLAGS, ...spec.flags], FLAG_ARITY, args2);
+  return core === null ? null : `${specKey}: ${core}. Run: mesh ${specKey} --help`;
+}
+function validatePositionals(specKey, args2) {
+  const spec = COMMAND_SPEC[specKey];
+  if (spec === undefined)
+    return null;
+  const words = specKey.split(" ").length;
+  if (args2.positional.length - words <= spec.max)
+    return null;
+  const first = args2.positional[words + spec.max];
+  const takes = spec.max === 0 ? "takes no arguments" : `takes at most ${spec.max} (${spec.names.join(" ")})`;
+  return `${specKey}: unexpected argument "${first}" — ${takes}. Run: mesh ${specKey} --help`;
 }
 function flag5(args2, name) {
   const v = args2.flags[name];
@@ -11466,6 +11680,23 @@ function die5(msg) {
 `);
   process.exit(1);
 }
+
+// src/version.ts
+import { readFileSync as readFileSync7 } from "node:fs";
+import { dirname as dirname6, resolve as resolve3 } from "node:path";
+import { fileURLToPath } from "node:url";
+function getVersion() {
+  if (true)
+    return "1.25.0";
+  try {
+    const here = dirname6(fileURLToPath(import.meta.url));
+    return readFileSync7(resolve3(here, "../../../VERSION"), "utf8").trim();
+  } catch {
+    return "unknown";
+  }
+}
+
+// src/main.ts
 function ok6(msg) {
   process.stdout.write(msg + `
 `);
@@ -11475,16 +11706,6 @@ function wantsHelp(argv) {
 }
 function wantsVersion(argv) {
   return argv.includes("--version") || argv.includes("-V");
-}
-function getVersion() {
-  if (true)
-    return "1.22.0";
-  try {
-    const here = dirname6(fileURLToPath(import.meta.url));
-    return readFileSync7(resolve3(here, "../../../VERSION"), "utf8").trim();
-  } catch {
-    return "unknown";
-  }
 }
 function grepLine(r) {
   return `${r.path}: ${r.snippet}`;
@@ -11513,10 +11734,10 @@ async function hydrateSubtree(client2, prefix, into, roomId, home, prune = false
   return result;
 }
 function localSizes(paths, into) {
-  const base = resolve3(into);
+  const base = resolve4(into);
   const sizes = {};
   for (const path4 of paths) {
-    const dest = resolve3(into, path4);
+    const dest = resolve4(into, path4);
     if (dest !== base && !dest.startsWith(base + sep3))
       continue;
     try {
@@ -11737,9 +11958,6 @@ async function cmdJoin(args2) {
   const passphrase = flag5(args2, "passphrase");
   if (!roomUrl || !inviteStr) {
     die5("join: usage: mesh join <room-url> <room>.<secret>   or   mesh join <room-url> <room> --passphrase <phrase>");
-  }
-  if (passphrase === undefined && flagBool3(args2, "passphrase")) {
-    die5("join: --passphrase requires a value, e.g. --passphrase angry-lion");
   }
   const home = flag5(args2, "home");
   let roomId;
@@ -12198,8 +12416,8 @@ async function cmdChat(args2) {
   let senderWidth = widths.length > 0 ? Math.min(28, Math.max(12, Math.max(...widths))) : undefined;
   let since = head.seq;
   let inputExit;
-  const inputClosed = new Promise((resolve4) => {
-    inputExit = resolve4;
+  const inputClosed = new Promise((resolve5) => {
+    inputExit = resolve5;
   });
   const ac = new AbortController;
   const badge = state !== null ? composeBadge({ unread: 0, fsBehind: 0, fsConflict: 0, openDecisions: openDecisionsCount(state, identity.id) }) : null;
@@ -12486,7 +12704,7 @@ async function cmdFetch(args2) {
   if (!(bytes instanceof Uint8Array))
     die5(`fetch: [${bytes.error}] ${bytes.detail}${bytes.hint ? " — " + bytes.hint : ""}`);
   const name = arg.startsWith("r2:") ? ref.hash : arg;
-  const dest = resolve3(flag5(args2, "into") ?? join7(home ?? meshHome(), "artifacts", name));
+  const dest = resolve4(flag5(args2, "into") ?? join7(home ?? meshHome(), "artifacts", name));
   await unpackInto(bytes, dest);
   ok6(`Extracted to ${dest}`);
 }
@@ -12494,11 +12712,11 @@ var REFETCH_DEBOUNCE_MS = 300;
 var TICK_MS = 5000;
 var RECENT_LINES_CAP = 6;
 function cancelableDelay(ms) {
-  const { promise, resolve: resolve4 } = Promise.withResolvers();
-  const timer = setTimeout(resolve4, ms);
+  const { promise, resolve: resolve5 } = Promise.withResolvers();
+  const timer = setTimeout(resolve5, ms);
   return { promise, cancel: () => {
     clearTimeout(timer);
-    resolve4();
+    resolve5();
   } };
 }
 function startTicker(ms, onTick) {
@@ -12578,7 +12796,7 @@ async function statusScan(client2, opts) {
   } catch {}
   const local = new Map;
   for (const [p, abs2] of localAbsByPath) {
-    const bytes = readFileSync7(abs2);
+    const bytes = readFileSync8(abs2);
     const text = isValidUtf8Bytes(new Uint8Array(bytes)) ? bytes.toString("utf8") : undefined;
     local.set(p, { hash: "r2:" + sha256hex(new Uint8Array(bytes)), text });
   }
@@ -12609,7 +12827,7 @@ async function statusScan(client2, opts) {
       const sidecar = readSidecar(client2.roomId, row.path, home);
       if (!localAbs || !node?.content_hash || !sidecar || sidecar.content === undefined)
         continue;
-      const localBytes = readFileSync7(localAbs);
+      const localBytes = readFileSync8(localAbs);
       if (!isValidUtf8Bytes(new Uint8Array(localBytes)))
         continue;
       let hash;
@@ -12710,7 +12928,7 @@ var FS_CMDS = {
     const targets = candidates.map((c) => ({
       repoPath: c.repoPath,
       localAbs: c.localAbs,
-      localBytes: new Uint8Array(readFileSync7(c.localAbs))
+      localBytes: new Uint8Array(readFileSync8(c.localAbs))
     }));
     const json = flagBool3(args2, "json");
     const mode = resolveMode(json, process.stderr.isTTY ?? false);
@@ -13019,7 +13237,7 @@ var FS_CMDS = {
       ok6("(nothing to hydrate)");
       return;
     }
-    ok6(`fs hydrate: ${result.rows.length} path(s) under ${prefix || "(room root)"} → ${resolve3(into)}`);
+    ok6(`fs hydrate: ${result.rows.length} path(s) under ${prefix || "(room root)"} → ${resolve4(into)}`);
     if (result.rows.some((r) => getRowNeedsVerify(r.outcome)))
       ok6(`verify: mesh fs status${prefix ? " " + prefix : ""}`);
     process.exitCode = result.exitCode;
@@ -13145,7 +13363,7 @@ var FS_CMDS = {
     const deep = flagBool3(args2, "deep");
     const porcelain = flagBool3(args2, "porcelain");
     const home = flag5(args2, "home");
-    const root = resolve3(flag5(args2, "root") ?? ".");
+    const root = resolve4(flag5(args2, "root") ?? ".");
     const rows = await statusScan(client2, { prefix, root, home, deep });
     const normPrefix = prefix ? normalizeId(prefix) : "";
     if (!porcelain)
@@ -13163,7 +13381,7 @@ var FS_CMDS = {
     if (!repopath)
       die5("fs diff: <path> is required");
     const showBase = flagBool3(args2, "base");
-    const root = resolve3(flag5(args2, "root") ?? ".");
+    const root = resolve4(flag5(args2, "root") ?? ".");
     const home = flag5(args2, "home");
     const t = await client2.getTree();
     if ("error" in t)
@@ -13176,9 +13394,9 @@ var FS_CMDS = {
     const norm = normalizeId(repopath);
     let localBytes;
     try {
-      localBytes = readFileSync7(join7(root, repopath));
+      localBytes = readFileSync8(join7(root, repopath));
     } catch {
-      die5(`fs diff: no local copy at ${resolve3(root, repopath)} — run 'mesh fs get ${repopath}' first`);
+      die5(`fs diff: no local copy at ${resolve4(root, repopath)} — run 'mesh fs get ${repopath}' first`);
     }
     let hash;
     try {
@@ -13275,7 +13493,7 @@ async function cmdDoctor(args2) {
     roomId,
     secretBytes: identity.secretBytes
   });
-  const root = resolve3(flag5(args2, "root") ?? ".");
+  const root = resolve4(flag5(args2, "root") ?? ".");
   await runDoctor(client2, args2, { root, home });
 }
 async function cmdState(args2) {
@@ -13444,13 +13662,12 @@ async function cmdInbox(args2) {
 function inboxExitCode(entryCount, notifyCount) {
   return entryCount > 0 || notifyCount > 0 ? 1 : 0;
 }
-function usage() {
-  ok6(`mesh v${getVersion()} — shared agent coordination & live workspace
+var USAGE = `mesh v${getVersion()} — shared agent coordination & live workspace
 
 identity:
   init                                                      Interactive setup: profile + identity + room
-  keygen --id <id> [--roles a,b]                            Generate an Ed25519 identity keypair
-  use <name>                                                Switch the active profile (persisted)
+  keygen --id <id> [--roles <a,b>] [--force]                Generate an Ed25519 identity keypair (--force replaces an existing identity)
+  use <profile-name>                                        Switch the active profile (persisted)
   profile list                                              List profiles (* = active)
   whoami                                                    Show current identity (id, pubkey, home)
   identity list                                             List local identities; flags id/key collisions
@@ -13459,12 +13676,12 @@ identity:
   key retire                                                 Retire this identity: no further entries may be authored
 
 room:
-  room create <room> --owner <id> [--url <base>]            Create a room and join as owner (--url: $ROOM_URL or hosted default)
-  room join <room-url> <room>.<secret>                      Join an existing room
-  room join <room-url> <room> --passphrase <phrase>         Join with a single-use passphrase invite
-  room invite [--show | --rotate]                           Show or rotate the invite secret (owner only)
-  room invite --for <id> [--passphrase <p>] [--ttl <s>]     Mint a single-use passphrase invite for one participant id (owner only)
-  room invite [--list | --revoke <id>]                      List or revoke pending passphrase invites (owner only)
+  room create <room_id> --owner <id> [--url <base>] [--host <name>] Create a room and join as owner (--url: $ROOM_URL or hosted default)
+  room join <room-url> <room>.<secret> [--host <name>]      Join an existing room
+  room join <room-url> <room> --passphrase <phrase> [--host <name>] Join with a single-use passphrase invite
+  room invite [<room_id>] [--show | --rotate]               Show or rotate the invite secret (owner only)
+  room invite [<room_id>] --for <id> [--passphrase <p>] [--ttl <s>]  Mint a single-use passphrase invite for one participant id (owner only)
+  room invite [<room_id>] [--list | --revoke <id>]          List or revoke pending passphrase invites (owner only)
   room list                                                 List locally-joined rooms (* = active)
   room rm <room_id>                                         Forget a room locally (not a server delete)
   room delete <room_id>                                     Delete the room on the server (owner only)
@@ -13474,35 +13691,33 @@ room:
 messaging:
   log [-f] [--all]                                          Show room log — collab lane by default (file.* / system.* entries hidden; use --all for the full log, or 'fs log' for the file plane). -f: follow
   chat                                                      Live stream + interactive post
-  post <body> [--thread <t>]                                Post a request entry
+  post <body> [--body <s>] [--thread <t>]                   Post a request entry (--body is the non-positional form)
 
 tasks:
-  announce <task_ref> --body <s> [options]                  Post a claimable task
-    options: --verdict-by <id>, --claim-window-s <n>,
-             --lease-ttl-s <n>, --max-claim-s <n>,
-             --depends-on <ref[,ref]>
-  claim <task_ref>                                          Claim a task (first writer wins — CAS)
-  release <task_ref>                                        Release a held task
+  announce <task_ref> --body <s> [--verdict-by <id>]        Post a claimable task
+    [--claim-window-s <n>] [--lease-ttl-s <n>] [--max-claim-s <n>] [--depends-on <ref[,ref]>]
+  claim <task_ref> [--body <s>] [--artifact <ref>]          Claim a task (first writer wins — CAS)
+  release <task_ref> [--body <s>] [--artifact <ref>]        Release a held task
   deliver <task_ref> [--dir <path> | --artifact <ref>] [--body <s>]    Deliver artifacts (--dir: tars the tree, honoring .meshignore + always excluding .git)
-  accept <task_ref> [--body <s>]                            Accept delivery → DONE
-  reject <task_ref> --body <reason>                         Reject delivery → back to ANNOUNCED
-  inform <task_ref> --body <s>                              Post a progress update (no state change)
+  accept <task_ref> [--body <s>] [--artifact <ref>]         Accept delivery → DONE
+  reject <task_ref> --body <reason> [--artifact <ref>]      Reject delivery → back to ANNOUNCED
+  inform <task_ref> --body <s> [--artifact <ref>]           Post a progress update (no state change)
   ack <escalate_seq>                                        Mark an escalation handled (attributed; any member)
   fetch <task|r2:hash> [--into <dir>]                       Download + extract a delivered artifact
   watch task <task_ref> <STATE>                             Register a task-state watch
-  watch entry [--performative P] [--thread T]               Register an entry watch
+  watch entry [--performative <P>] [--thread <T>]           Register an entry watch
             [--mention-me] [--path <p>] [--participant <id>] [--task-ref <ref>]
 
 files:
   (workspace root = cwd by default, --root <dir> overrides, --into <dir> stays for one-off scratch staging; identity = normalizeId(path) relative to that root, same in the room tree)
-  fs put <path|dir> [--as <repopath>] [--all] [--prune-ignored] [--verbose] [--stop-on-error] [--json]  Upload a file or directory (.meshignore excludes, --all includes hidden; --prune-ignored evicts room copies of paths .meshignore newly excludes, via file.delete). Streams a live progress line by default (in place on a TTY, throttled lines when captured), then a metrics summary — \`fs put done: … [exit N]\` — plus per-file lines only for outcomes needing attention. --verbose lists every file; an oversized file fails the whole batch up front (client-side preflight against the room's artifact cap, names every offending file, before any upload), a server-rejected file mid-batch is skipped and reported, --stop-on-error aborts at the first failure; --json streams NDJSON.
+  fs put <path|dir> [--as <repopath>] [--all] [--strict] [--prune-ignored] [--verbose|-v] [--stop-on-error] [--json]  Upload a file or directory (.meshignore excludes, --all includes hidden; --strict aborts on sync conflicts; --prune-ignored evicts room copies of paths .meshignore newly excludes, via file.delete). Streams a live progress line by default (in place on a TTY, throttled lines when captured), then a metrics summary — \`fs put done: … [exit N]\` — plus per-file lines only for outcomes needing attention. --verbose/-v lists every file; an oversized file fails the whole batch up front (client-side preflight against the room's artifact cap, names every offending file, before any upload), a server-rejected file mid-batch is skipped and reported, --stop-on-error aborts at the first failure; --json streams NDJSON.
   fs ls [<prefix>] [-f] [--into <dir>|--root <dir>]         List the shared workspace tree (-f: live view — tree, leases, hydration); local column compares against the workspace root
   fs get <repopath|prefix> [--into <dir>|--root <dir>] [--prune] [--json] Hydrate a file/subtree (streams a live progress line by default); --prune drops local copies the room cleanly deleted; --json streams NDJSON progress
-  fs rm <repopath> [-r]                                     Delete a file (or a whole subtree with -r)
+  fs rm <repopath> [-r|--recursive]                         Delete a file (or a whole subtree recursively)
   fs edit <path> [--into <dir>|--root <dir>]                Subscribe + edit a live Yjs doc (Ctrl+C to exit)
   fs lock <path>                                            Acquire exclusive lease (file.lock)
   fs unlock <path>                                          Release exclusive lease (file.unlock)
-  fs grep <query> [--prefix p] [--limit n] [--hydrate]     Search file content; --hydrate fetches matched files
+  fs grep <query> [--prefix <p>] [--limit <n>] [--hydrate] [--into <dir>|--root <dir>] Search file content; --hydrate fetches matched files
   fs log [-f]                                               Show workspace changes (file.*, system.grant/role/revoke/lease_clear/config) (-f: follow)
   fs hydrate [<prefix>] [--into <dir>|--root <dir>] [--prune]  Bulk-download subtree to disk, into the workspace root (default: cwd); same safety + --prune as fs get
   fs grant <subject> <path> <grade>                         Issue a path grant (owner only; grade: discover|read|write|exclusive)
@@ -13516,7 +13731,7 @@ files:
   fs config <open|closed> | write <open|closed> | discover <open|closed> | rate <spec> | authority-source <card|bindings> | archive <n> | fts <bytes> | artifact <bytes> | public-share <on|off>
                                                              Set default_access posture, rate limit, verdict authority posture, entries-axis checkpoint threshold (Intent P, 0=off), FTS per-file size cap, artifact size ceiling, or public browser file-view sharing — owner only
   fs deps <path>                                            Walk a file's import closure; flag deps you can't read
-  fs request <path> [--grade read]                          Post an advisory access request for a path
+  fs request <path> [--grade <grade>]                       Post an advisory access request for a path
   fs status [<prefix>] [--deep] [--porcelain] [--root <dir>]  Awareness: per-file sync state vs the room (= in-sync ↑ ahead ↓ behind ⇅ diverged C markers \uD83D\uDD12 locked ? untracked ✝ room-deleted); --deep dry-runs a merge on diverged files; read-only, exit 0 always
   fs diff <path> [--base] [--root <dir>]                    Unified diff of your local copy against the room tip (no local writes); --base adds a 3-way base↔mine/base↔tip summary
 
@@ -13543,7 +13758,12 @@ Global options:
   ROOM_URL (env)      Room base URL when --url is omitted (else the hosted default)
   --help, -h          Show this usage (anywhere in the command line)
   --version, -V       Print the CLI version (also: mesh version)
-`);
+`;
+function usageText() {
+  return USAGE;
+}
+function usage() {
+  ok6(USAGE);
 }
 function expandHome(p) {
   return p.startsWith("~/") ? os3.homedir() + p.slice(1) : p;
@@ -13619,7 +13839,14 @@ async function main() {
     ok6(`mesh v${getVersion()}`);
     return;
   }
-  const args2 = parseArgs(argv);
+  const args2 = parseArgs(argv, FLAG_ARITY);
+  const specKey = specKeyFor(args2.positional);
+  const flagErr = validateFlags(specKey, args2);
+  if (flagErr !== null)
+    die5(flagErr);
+  const posErr = validatePositionals(specKey, args2);
+  if (posErr !== null)
+    die5(posErr);
   if (!flag5(args2, "home")) {
     args2.flags["home"] = resolveProfileHome(flag5(args2, "profile"));
   }
@@ -13727,6 +13954,7 @@ main().catch((err2) => {
 export {
   wantsVersion,
   wantsHelp,
+  usageText,
   statusScan,
   runDeliver,
   runAck,
@@ -13743,7 +13971,6 @@ export {
   hydrateSubtree,
   hydrateGrepWinners,
   grepLine,
-  getVersion,
   generatePassphrase,
   formatGrepSkipNote,
   flagOutOfScope,

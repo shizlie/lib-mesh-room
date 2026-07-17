@@ -573,16 +573,16 @@ The shim environment is **sovereign and opt-in**: it is activated only for proce
 through `meshl exec`. The operator (or CI step) starts the agent with:
 
 ```sh
-meshl exec --config mesh.yml -- <agent-cmd>
+meshl exec [--workspace <dir>] [--state-dir <dir>] -- <agent-cmd>
 # e.g.:
-meshl exec --config mesh.yml -- claude
-meshl exec --config mesh.yml -- bun run my-agent.ts
+meshl exec -- claude                                        # workspace = cwd, state dir = ~/.mesh/state
+meshl exec --state-dir ~/.mesh/state/agentB -- bun run my-agent.ts
 ```
 
 `meshl exec` does three things, then `exec`s the agent (no parent process lingers):
 1. **Prepends the shim bin dir to `PATH`** — shim scripts for `ls`, `find`, `grep`, `cat` shadow
    the real tools for all child processes.
-2. **Sets `cwd` to the workspace root** (from `mesh.yml` `workspace` field, if set).
+2. **Sets `cwd` to the workspace root** (`--workspace`; defaults to the current directory).
 3. **Injects `MESH_SHIM_SOCKET`** (daemon IPC socket path) and **`MESH_SHIM_WORKSPACE`** into the
    child environment so shim scripts can reach the daemon.
 
@@ -836,6 +836,42 @@ before the command exits — so they're told, not left to poll, the moment the p
 frees. Watch registration failures (e.g. the 64-watches-per-participant cap) never
 fail the surrounding fs operation; they print a visible warning instead.
 
+### Durable wake delivery and listener status
+
+For `tmux` and `hybrid` wake delivery, a digest that cannot be injected because
+the pane is busy or gone is saved before the wake cursor advances. The daemon
+writes `state_dir/pending_wake.json` with this shape:
+
+```json
+{"digest":"[mesh] 3 relevant events through seq 142","through_seq":142,"ts":1784160000000}
+```
+
+`digest` is the text awaiting injection, `through_seq` is the last room
+sequence covered by that digest, and `ts` is the Unix timestamp in milliseconds
+when it was deferred. The file survives daemon restarts. It is cleared after
+that digest is injected successfully, or after a later wake is delivered and
+therefore supersedes it. Clearing is sequence-guarded, so an older retry cannot
+delete a newer pending wake.
+
+The listener checks for a pending record at the `wake.tmux.busy_retry_s`
+cadence (default 10 seconds). When the file is absent, each tick stops after the
+local file check and does not probe or capture the tmux pane, so the retry loop
+has zero tmux cost while empty. When a record exists, the listener probes the
+pane and retries delivery at the next observed idle boundary; a busy or gone
+pane leaves the record in place for the next tick.
+
+`meshl status` reports the wake pipeline with these fields:
+
+| field | meaning |
+|-------|---------|
+| `room` | Configured room id. |
+| `wake_cursor` | Last batch handed to the wake pipeline. |
+| `unwoken_log_gap` | Room head minus `wake_cursor`; includes entries your subscriptions never matched, so it is **not delivery lag**. |
+| `pending_wake` | `none`, or `yes — through seq N, deferred Ns ago (retries at next idle)` for the durable deferred digest. |
+| `hook_state` | Latest agent hook state and its age, or the scrape-fallback reason when no usable hook state exists. |
+| `probe` | Current effective pane state: `idle`, `busy`, `gone`, or an error/`n/a` result. |
+| `state_dir` | Local directory containing listener state, including the cursor and any pending wake. |
+
 ### Configuration (`mesh.yml`)
 
 Required fields:
@@ -863,7 +899,7 @@ Optional:
 | `subscriptions.watches` | Extra watch predicates to register at startup |
 | `wake.tmux.pane` | tmux target-pane (required for tmux and hybrid backends) |
 | `wake.tmux.adapter` | CLI adapter identifier (omp, claude, codex) |
-| `wake.tmux.busy_retry_s` | Retry interval when pane is busy |
+| `wake.tmux.busy_retry_s` | Retry interval when the pane is busy and cadence for pending-wake checks — default `10` s |
 | `wake.tmux.max_busy_wait_s` | Give up after this many seconds if always busy |
 | `wake.mcp.poll_hint_interval_s` | Hybrid: inject a nudge if inbox non-empty and agent hasn't polled (default 900 s) |
 | `wake.escalation.mentions` | Hybrid: inject on @-mentions (true/false) |
@@ -1083,15 +1119,20 @@ the consumer and heartbeater cleanly.
 
 ```sh
 meshl status --config mesh.yml
-# room:        swarm-myproject
-# wake_cursor: 142
-# queue_depth: 3
-# probe:       idle
-# state_dir:   /home/user/.mesh/state/agentB
+# room:            swarm-myproject
+# wake_cursor:     142   (last batch handed to the wake pipeline)
+# unwoken_log_gap: 3   (room head − wake_cursor; includes entries your subscriptions never matched — NOT delivery lag)
+# pending_wake:    none
+# hook_state:      idle (age 4s)
+# probe:           idle
+# state_dir:       /home/user/.mesh/state/agentB
 ```
 
 - `wake_cursor` — last seq the daemon processed; stored in `state_dir/wake_cursor.json`
-- `queue_depth` — entries between the wake cursor and the room head
+- `unwoken_log_gap` — room head − wake cursor; counts entries the daemon's subscriptions
+  never matched, so it is **not** delivery lag
+- `pending_wake` — the durable deferred digest (see "Durable wake delivery and listener
+  status" above), or `none`
 - `probe` — tmux pane state (`idle`, `busy`, `gone`; `n/a` for non-tmux backends)
 
 ### MCP shim

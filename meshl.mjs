@@ -13581,11 +13581,11 @@ var require_dist = __commonJS((exports, module) => {
 });
 
 // src/main.ts
-import { readFileSync as readFileSync8, existsSync as existsSync7, statSync as statSync4 } from "node:fs";
-import { mkdirSync as mkdirSync4, openSync, writeFileSync as writeFileSync5, rmSync as rmSync3, realpathSync as realpathSync2 } from "node:fs";
-import { join as join8, resolve as resolve2 } from "node:path";
+import { readFileSync as readFileSync10, existsSync as existsSync7, statSync as statSync4 } from "node:fs";
+import { mkdirSync as mkdirSync4, openSync, writeFileSync as writeFileSync6, rmSync as rmSync4, realpathSync as realpathSync2 } from "node:fs";
+import { join as join9, resolve as resolve3 } from "node:path";
 import { homedir as homedir2 } from "node:os";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
 import { spawn } from "node:child_process";
 
 // src/config.ts
@@ -31287,16 +31287,332 @@ class WorksetScanner {
   }
 }
 
-// src/main.ts
-function resolveHome(p) {
-  return p.startsWith("~/") ? join8(homedir2(), p.slice(2)) : resolve2(p);
+// src/pending-wake.ts
+import { readFileSync as readFileSync8, writeFileSync as writeFileSync5, renameSync as renameSync2, rmSync as rmSync3 } from "node:fs";
+import { join as join8 } from "node:path";
+var PENDING_WAKE_FILE = "pending_wake.json";
+function loadPendingWake(stateDir) {
+  try {
+    const raw = JSON.parse(readFileSync8(join8(stateDir, PENDING_WAKE_FILE), "utf8"));
+    if (typeof raw.digest !== "string" || typeof raw.through_seq !== "number")
+      return null;
+    return raw;
+  } catch {
+    return null;
+  }
+}
+function savePendingWake(stateDir, p) {
+  const target = join8(stateDir, PENDING_WAKE_FILE);
+  const tmp = `${target}.tmp`;
+  writeFileSync5(tmp, JSON.stringify(p));
+  renameSync2(tmp, target);
+}
+function clearPendingWakeIf(stateDir, throughSeq) {
+  const current = loadPendingWake(stateDir);
+  if (current !== null && current.through_seq <= throughSeq) {
+    rmSync3(join8(stateDir, PENDING_WAKE_FILE), { force: true });
+  }
+}
+function durableDeliver(stateDir, deliver, log = (m) => console.error(m)) {
+  return async (digest, throughSeq) => {
+    let result;
+    try {
+      result = await deliver(digest);
+    } catch (e) {
+      log(`[meshl] wake delivery threw — deferring (through seq ${throughSeq}): ${e instanceof Error ? e.message : String(e)}`);
+      result = "threw";
+    }
+    try {
+      if (result === "injected") {
+        clearPendingWakeIf(stateDir, throughSeq);
+        return;
+      }
+      savePendingWake(stateDir, { digest, through_seq: throughSeq, ts: Date.now() });
+      if (result !== "threw") {
+        log(`[meshl] injector ${result} — wake digest deferred to ${PENDING_WAKE_FILE}; retrying at next idle`);
+      }
+    } catch (e) {
+      log(`[meshl] pending-wake persist failed (wake through seq ${throughSeq} may be lost): ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+}
+function startPendingWakeRetryLoop(opts) {
+  const log = opts.log ?? ((m) => console.error(m));
+  let inFlight = false;
+  const timer = setInterval(async () => {
+    if (inFlight)
+      return;
+    const pending = loadPendingWake(opts.stateDir);
+    if (pending === null)
+      return;
+    inFlight = true;
+    try {
+      if (await opts.probe() !== "idle")
+        return;
+      const result = await opts.deliver(pending.digest);
+      if (result === "injected") {
+        clearPendingWakeIf(opts.stateDir, pending.through_seq);
+        log(`[meshl] deferred wake delivered (through seq ${pending.through_seq})`);
+      }
+    } catch (e) {
+      log(`[meshl] pending-wake retry error: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      inFlight = false;
+    }
+  }, opts.intervalMs);
+  timer.unref?.();
+  return { stop: () => clearInterval(timer) };
+}
+
+// src/status.ts
+function renderStatusLines(i) {
+  const pendingLine = i.pending === null ? `pending_wake:    none` : `pending_wake:    yes — through seq ${i.pending.through_seq}, deferred ${Math.round((i.nowMs - i.pending.ts) / 1000)}s ago (retries at next idle)`;
+  const lines = [
+    `room:            ${i.roomId}`,
+    `wake_cursor:     ${i.cursorSeq}   (last batch handed to the wake pipeline)`,
+    `unwoken_log_gap: ${i.unwokenGap}   (room head − wake_cursor; includes entries your subscriptions never matched — NOT delivery lag)`,
+    pendingLine,
+    `hook_state:      ${i.hookState}`,
+    `probe:           ${i.probeState}`,
+    `state_dir:       ${i.stateDir}`
+  ];
+  if (i.probeState === "busy" && typeof i.unwokenGap === "number" && i.unwokenGap > 0) {
+    lines.push(`hint:            probe=busy with ${i.unwokenGap} event(s) waiting — the agent may be stuck at a`);
+    lines.push(`                 prompt (login / permission / input). Attach the pane (tmux attach) and clear it;`);
+    lines.push(`                 wakes resume once it returns to idle. \`meshl poke\` can't dismiss a login screen.`);
+  }
+  return lines;
+}
+
+// ../cli/src/flags.ts
+function parseArgs(argv, arity) {
+  const positional = [];
+  const flags = {};
+  let i = 0;
+  while (i < argv.length) {
+    const arg = argv[i];
+    if (arg.startsWith("--")) {
+      const eq = arg.indexOf("=");
+      if (eq !== -1) {
+        flags[arg.slice(2, eq)] = arg.slice(eq + 1);
+        i++;
+        continue;
+      }
+      const key = arg.slice(2);
+      const next = argv[i + 1];
+      const kind = arity[key];
+      if (kind === "boolean") {
+        flags[key] = true;
+        i++;
+      } else if (kind === "value") {
+        if (next !== undefined && !next.startsWith("--")) {
+          flags[key] = next;
+          i += 2;
+        } else {
+          flags[key] = true;
+          i++;
+        }
+      } else {
+        flags[key] = true;
+        i++;
+      }
+    } else if (arg.length > 1 && arg.startsWith("-") && !arg.startsWith("--")) {
+      flags[arg.slice(1)] = true;
+      i++;
+    } else {
+      positional.push(arg);
+      i++;
+    }
+  }
+  return { positional, flags };
+}
+var GROUP_COMMANDS = new Set(["fs", "room", "identity", "key", "profile", "decide", "watch"]);
+var COMMAND_SPEC = {
+  init: { flags: [], max: 0, names: [] },
+  keygen: { flags: ["id", "roles", "force"], max: 0, names: [] },
+  use: { flags: [], max: 1, names: ["profile-name"] },
+  "profile list": { flags: [], max: 0, names: [] },
+  whoami: { flags: [], max: 0, names: [] },
+  "identity list": { flags: [], max: 0, names: [] },
+  "identity copy": { flags: ["from", "to", "force"], max: 0, names: [] },
+  "key rotate": { flags: [], max: 0, names: [] },
+  "key retire": { flags: [], max: 0, names: [] },
+  "room create": { flags: ["owner", "host"], max: 1, names: ["room_id"] },
+  "room join": { flags: ["passphrase", "host"], max: 2, names: ["room-url", "room-or-invite"] },
+  "room invite": { flags: ["show", "rotate", "for", "passphrase", "ttl", "list", "revoke"], max: 1, names: ["room_id"] },
+  "room list": { flags: [], max: 0, names: [] },
+  "room rm": { flags: [], max: 1, names: ["room_id"] },
+  "room delete": { flags: [], max: 1, names: ["room_id"] },
+  "room log": { flags: ["f", "all"], max: 0, names: [] },
+  log: { flags: ["f", "all"], max: 0, names: [] },
+  chat: { flags: [], max: 0, names: [] },
+  post: { flags: ["body", "thread"], max: 1, names: ["body"] },
+  announce: { flags: ["body", "verdict-by", "claim-window-s", "lease-ttl-s", "max-claim-s", "depends-on"], max: 1, names: ["task_ref"] },
+  claim: { flags: ["body", "artifact"], max: 1, names: ["task_ref"] },
+  release: { flags: ["body", "artifact"], max: 1, names: ["task_ref"] },
+  deliver: { flags: ["dir", "artifact", "body"], max: 1, names: ["task_ref"] },
+  accept: { flags: ["body", "artifact"], max: 1, names: ["task_ref"] },
+  reject: { flags: ["body", "artifact"], max: 1, names: ["task_ref"] },
+  inform: { flags: ["body", "artifact"], max: 1, names: ["task_ref"] },
+  ack: { flags: [], max: 1, names: ["escalate_seq"] },
+  fetch: { flags: ["into"], max: 1, names: ["task-or-hash"] },
+  "watch task": { flags: [], max: 2, names: ["task_ref", "STATE"] },
+  "watch entry": { flags: ["performative", "thread", "mention-me", "path", "participant", "task-ref"], max: 0, names: [] },
+  "fs put": { flags: ["as", "all", "strict", "prune-ignored", "verbose", "v", "stop-on-error"], max: 1, names: ["path"] },
+  "fs ls": { flags: ["f", "into", "root"], max: 1, names: ["prefix"] },
+  "fs get": { flags: ["into", "root", "prune"], max: 1, names: ["repopath"] },
+  "fs rm": { flags: ["r", "recursive"], max: 1, names: ["repopath"] },
+  "fs edit": { flags: ["into", "root"], max: 1, names: ["path"] },
+  "fs lock": { flags: [], max: 1, names: ["path"] },
+  "fs unlock": { flags: [], max: 1, names: ["path"] },
+  "fs grep": { flags: ["prefix", "limit", "hydrate", "into", "root"], max: 1, names: ["query"] },
+  "fs log": { flags: ["f"], max: 0, names: [] },
+  "fs hydrate": { flags: ["into", "root", "prune"], max: 1, names: ["prefix"] },
+  "fs grant": { flags: [], max: 3, names: ["subject", "path", "grade"] },
+  "fs grants": { flags: [], max: 0, names: [] },
+  "fs revoke": { flags: [], max: 2, names: ["subject", "path"] },
+  "fs role": { flags: ["replaces", "depth", "from", "until", "override"], max: 2, names: ["participant", "role"] },
+  "fs roles": { flags: [], max: 0, names: [] },
+  "fs role-rm": { flags: [], max: 2, names: ["participant", "role"] },
+  "fs leases": { flags: [], max: 0, names: [] },
+  "fs config": { flags: [], max: 2, names: ["setting", "value"] },
+  "fs deps": { flags: [], max: 1, names: ["path"] },
+  "fs request": { flags: ["grade"], max: 1, names: ["path"] },
+  "fs status": { flags: ["deep", "porcelain", "root"], max: 1, names: ["prefix"] },
+  "fs diff": { flags: ["base", "root"], max: 1, names: ["path"] },
+  state: { flags: [], max: 0, names: [] },
+  inbox: { flags: ["since", "mark"], max: 0, names: [] },
+  brief: { flags: [], max: 0, names: [] },
+  doctor: { flags: ["porcelain", "root"], max: 0, names: [] },
+  "decide ask": { flags: ["by", "deadline", "fallback-note", "ref"], max: 1, names: ["question"] },
+  "decide answer": { flags: ["resolution"], max: 1, names: ["decision-id"] },
+  "decide list": { flags: ["mine", "role"], max: 0, names: [] },
+  "decide show": { flags: [], max: 1, names: ["decision-id"] },
+  "decide wait-report": { flags: ["since", "human"], max: 0, names: [] },
+  version: { flags: [], max: 0, names: [] }
+};
+var ALIAS_OF = {
+  "room remove": "room rm",
+  "room forget": "room rm",
+  "create-room": "room create",
+  join: "room join"
+};
+for (const [alias, target] of Object.entries(ALIAS_OF))
+  COMMAND_SPEC[alias] = COMMAND_SPEC[target];
+function nearestFlag(name, allowed) {
+  let best = null;
+  let bestDistance = 3;
+  for (const candidate of allowed) {
+    const dp = Array.from({ length: name.length + 1 }, (_, i) => [i, ...Array(candidate.length).fill(0)]);
+    for (let j = 1;j <= candidate.length; j++)
+      dp[0][j] = j;
+    for (let i = 1;i <= name.length; i++) {
+      for (let j = 1;j <= candidate.length; j++) {
+        dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + (name[i - 1] === candidate[j - 1] ? 0 : 1));
+      }
+    }
+    const distance = dp[name.length][candidate.length];
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = candidate;
+    }
+  }
+  return best;
+}
+function validateAgainst(allowed, arity, args) {
+  for (const [key, value] of Object.entries(args.flags)) {
+    if (!allowed.includes(key)) {
+      const hint = nearestFlag(key, allowed);
+      return `unknown flag --${key}${hint !== null ? ` (did you mean --${hint}?)` : ""}`;
+    }
+    if (arity[key] === "value" && value === true)
+      return `--${key} requires a value`;
+    if (arity[key] === "boolean" && typeof value === "string")
+      return `--${key} takes no value`;
+  }
+  return null;
 }
 function flag(args, name) {
-  const idx = args.indexOf(name);
-  return idx !== -1 && idx + 1 < args.length ? args[idx + 1] : undefined;
+  const v = args.flags[name];
+  return typeof v === "string" ? v : undefined;
 }
-function hasFlag(args, name) {
-  return args.includes(name);
+function flagBool(args, name) {
+  return args.flags[name] !== undefined;
+}
+
+// ../cli/src/version.ts
+import { readFileSync as readFileSync9 } from "node:fs";
+import { dirname as dirname3, resolve as resolve2 } from "node:path";
+import { fileURLToPath } from "node:url";
+function getVersion() {
+  if (true)
+    return "1.25.0";
+  try {
+    const here = dirname3(fileURLToPath(import.meta.url));
+    return readFileSync9(resolve2(here, "../../../VERSION"), "utf8").trim();
+  } catch {
+    return "unknown";
+  }
+}
+
+// src/flags.ts
+var MESHL_FLAG_SPEC = {
+  mcp: ["state-dir"],
+  hooks: ["state-dir", "runtime"],
+  exec: ["workspace", "state-dir"],
+  run: ["config", "foreground", "f", "force"],
+  stop: ["config"],
+  validate: ["config"],
+  status: ["config"],
+  poke: ["config", "brief"]
+};
+var MESHL_FLAG_ARITY = {
+  "state-dir": "value",
+  runtime: "value",
+  workspace: "value",
+  config: "value",
+  foreground: "boolean",
+  f: "boolean",
+  force: "boolean",
+  brief: "boolean",
+  help: "boolean",
+  h: "boolean",
+  version: "boolean",
+  V: "boolean"
+};
+function usageText() {
+  return `meshl — mesh listener daemon + MCP shim
+
+Commands:
+  run --config <path> [--foreground] [--force]
+                                       Start the daemon. Detaches to the background by default
+                                       (logs → <state_dir>/daemon.log); --foreground/-f stays attached;
+                                       refuses if one is already running for this config (--force replaces it).
+  stop --config <path>                 Stop the background daemon (SIGTERM via <state_dir>/daemon.pid).
+  status --config <path>               Show room, wake cursor, queue depth, hook state, probe.
+  poke   --config <path> [--brief]     Force-inject an inbox hint into the pane now (manual wake;
+                                       bypasses the idle/busy gate — operator override when stuck).
+                                       --brief sends the Intent I arrival pointer instead.
+  validate --config <path>             Check config, identity key, room reachability, wake wiring.
+  mcp --state-dir <dir>                Run the stdio MCP shim (proxies to a running daemon's socket).
+  hooks [--runtime claude|omp] --state-dir <dir>
+                                       Print idle/busy state hooks (the robust wake signal):
+                                       claude → .claude/settings.json JSON; omp → an --hook module.
+  exec [--workspace <dir>] [--state-dir <dir>] -- <agent cmd...>
+                                       Launch an agent in the mesh workspace with shim binDir
+                                       prepended to PATH (opt-in, sovereign; A2 reframe).
+  help                                 Show this help.
+
+wake.backend (in mesh.yml):  tmux (push into a pane) | mcp (pull-only, no tmux) | hybrid (both).
+`;
+}
+function usage() {
+  process.stdout.write(usageText());
+}
+
+// src/main.ts
+function resolveHome(p) {
+  return p.startsWith("~/") ? join9(homedir2(), p.slice(2)) : resolve3(p);
 }
 function die(msg) {
   process.stderr.write(msg + `
@@ -31315,7 +31631,7 @@ function loadSecretBytes(config2) {
   const keyPath = resolveHome(config2.identity.key);
   if (!existsSync7(keyPath))
     die(`identity key not found: ${keyPath}`);
-  const identityFile = JSON.parse(readFileSync8(keyPath, "utf8"));
+  const identityFile = JSON.parse(readFileSync10(keyPath, "utf8"));
   const secretBytes = new Uint8Array(Buffer.from(identityFile.secret, "base64"));
   return { secretBytes, identityFile };
 }
@@ -31365,7 +31681,7 @@ function livenessOptsFrom(config2, stateDir) {
     intervalMs: config2.liveness.interval_s * 1000,
     stuckAfterMs: config2.liveness.stuck_after_s * 1000,
     debounceMs: config2.liveness.debounce_s * 1000,
-    hookStateFile: config2.wake.tmux ? join8(stateDir, AGENT_STATE_FILE) : null
+    hookStateFile: config2.wake.tmux ? join9(stateDir, AGENT_STATE_FILE) : null
   };
 }
 async function cmdRun(configPath, opts) {
@@ -31377,9 +31693,9 @@ async function cmdRun(configPath, opts) {
   const stateDir = resolveHome(config2.state_dir);
   mkdirSync4(stateDir, { recursive: true, mode: 448 });
   if (!opts.foreground && process.env["MESHL_DETACHED"] !== "1") {
-    const pidPath = join8(stateDir, "daemon.pid");
+    const pidPath = join9(stateDir, "daemon.pid");
     if (existsSync7(pidPath)) {
-      const existing = parseInt(readFileSync8(pidPath, "utf8").trim(), 10);
+      const existing = parseInt(readFileSync10(pidPath, "utf8").trim(), 10);
       if (Number.isInteger(existing) && pidAlive(existing)) {
         if (!opts.force) {
           die(`meshl already running for this config (pid ${existing}, room ${config2.room.id}).
@@ -31392,14 +31708,14 @@ async function cmdRun(configPath, opts) {
         console.log(`[meshl] replacing running daemon (pid ${existing})`);
       }
     }
-    const logPath = join8(stateDir, "daemon.log");
+    const logPath = join9(stateDir, "daemon.log");
     const out = openSync(logPath, "a");
     const child = spawn(process.execPath, [process.argv[1], "run", "--config", configPath, "--foreground"], {
       detached: true,
       stdio: ["ignore", out, out],
       env: { ...process.env, MESHL_DETACHED: "1" }
     });
-    writeFileSync5(pidPath, `${child.pid}
+    writeFileSync6(pidPath, `${child.pid}
 `, { mode: 384 });
     child.unref();
     console.log(`meshl daemon started — pid ${child.pid}, room ${config2.room.id}`);
@@ -31420,8 +31736,8 @@ async function cmdRun(configPath, opts) {
   const livenessWarn = checkLivenessCadence(config2.liveness);
   if (livenessWarn !== null)
     console.warn(`[meshl] ${livenessWarn}`);
-  const socketPath = join8(stateDir, "daemon.sock");
-  const cache = new WorkspaceCache(join8(stateDir, "fs", config2.room.id), client2);
+  const socketPath = join9(stateDir, "daemon.sock");
+  const cache = new WorkspaceCache(join9(stateDir, "fs", config2.room.id), client2);
   const ipcHandle = await startIpcServer({
     client: client2,
     stateDir,
@@ -31459,10 +31775,10 @@ async function runPullOnly(config2, client2, stateDir, socketPath, ipcHandle, wo
     console.error("[meshl] liveness: room gone/unauthorized — stopping monitor:", err2);
   }) : null;
   liveness?.start();
-  const { promise: promise2, resolve: resolve3 } = Promise.withResolvers();
+  const { promise: promise2, resolve: resolve4 } = Promise.withResolvers();
   const shutdown = () => {
     console.log("[meshl] stopping...");
-    resolve3();
+    resolve4();
   };
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
@@ -31476,12 +31792,13 @@ async function runPullOnly(config2, client2, stateDir, socketPath, ipcHandle, wo
 }
 async function runInjecting(config2, client2, stateDir, socketPath, ipcHandle, worksetScanner, cache) {
   const rawInjector = buildInjector(config2);
-  const injector = config2.wake.tmux ? new HookStateInjector(rawInjector, config2.wake.tmux.pane, join8(stateDir, AGENT_STATE_FILE), (config2.wake.hook_busy_stale_s ?? 900) * 1000) : rawInjector;
+  const injector = config2.wake.tmux ? new HookStateInjector(rawInjector, config2.wake.tmux.pane, join9(stateDir, AGENT_STATE_FILE), (config2.wake.hook_busy_stale_s ?? 900) * 1000) : rawInjector;
+  const deliver = (digest) => deliverWake(config2, client2, injector, stateDir, digest, Date.now());
   if (config2.brief.arrival_pointer && isFirstWakeEver(stateDir)) {
     (async () => {
       const roles = await resolveMyRoles(client2, config2.identity.id);
       const pointer = buildArrivalPointer(config2.identity.id, roles, config2.room.id);
-      const result = await deliverWake(config2, client2, injector, stateDir, pointer, Date.now());
+      const result = await deliver(pointer);
       if (result !== "injected") {
         console.error(`[meshl] arrival pointer not delivered (${result}) — it will not be retried until the next reanchor gap`);
       }
@@ -31520,35 +31837,21 @@ async function runInjecting(config2, client2, stateDir, socketPath, ipcHandle, w
         return result;
       }
     };
+    const durableEscalation = durableDeliver(stateDir, deliver);
     onWakeCb = async (digest, throughSeq) => {
       if (!consumeEscalations(escalationSeqs, throughSeq))
         return;
-      const result = await deliverWake(config2, client2, injector, stateDir, digest, Date.now());
-      if (result === "gone") {
-        console.error("[meshl] injector gone — hybrid escalation digest dropped");
-      } else if (result === "timeout") {
-        console.error("[meshl] injector busy timeout — hybrid escalation digest dropped");
-      }
+      await durableEscalation(digest, throughSeq);
     };
     const pollHintMs = (config2.wake.mcp?.poll_hint_interval_s ?? 900) * 1000;
     nudgeHandle = startNudgeLoop(() => client2.getEntries({ limit: 1 }), pollHintMs, async (line) => {
-      const result = await deliverWake(config2, client2, injector, stateDir, line, Date.now());
-      if (result === "gone") {
-        console.error("[meshl] injector gone — hybrid poll-hint dropped");
-      } else if (result === "timeout") {
-        console.error("[meshl] injector busy timeout — hybrid poll-hint dropped");
-      }
+      const result = await deliver(line);
+      if (result !== "injected")
+        console.error(`[meshl] injector ${result} — hybrid poll-hint dropped`);
     });
   } else {
     consumerClient = client2;
-    onWakeCb = async (digest, _throughSeq) => {
-      const result = await deliverWake(config2, client2, injector, stateDir, digest, Date.now());
-      if (result === "gone") {
-        console.error("[meshl] injector gone — wake digest dropped, will retry on next event");
-      } else if (result === "timeout") {
-        console.error("[meshl] injector busy timeout — wake digest dropped");
-      }
-    };
+    onWakeCb = durableDeliver(stateDir, deliver);
   }
   const prefetchConfig = config2.prefetch ?? { enabled: true, max_bytes: 5000000 };
   let canReadForPrefetch = () => false;
@@ -31572,7 +31875,7 @@ async function runInjecting(config2, client2, stateDir, socketPath, ipcHandle, w
   const dutyHandle = dutyIntervalS > 0 ? startDutyLoop(async () => {
     const s = await client2.getState();
     return { claims: s.claims, roster: s.roster, bindings: s.bindings, decisions: s.decisions };
-  }, config2.identity.id, config2.subscriptions.roles ?? [], dutyIntervalS * 1000, async (line) => await deliverWake(config2, client2, injector, stateDir, line, Date.now()) === "injected", async () => {
+  }, config2.identity.id, config2.subscriptions.roles ?? [], dutyIntervalS * 1000, async (line) => await deliver(line) === "injected", async () => {
     const leases = await client2.listLeases({ mine: true });
     return Array.isArray(leases) ? leases : [];
   }, (interest) => consumer.setDerivedInterest(interest), () => worksetScanner?.getCounts() ?? null) : null;
@@ -31584,6 +31887,7 @@ async function runInjecting(config2, client2, stateDir, socketPath, ipcHandle, w
     nudgeHandle?.stop();
     dutyHandle?.stop();
     accessRefreshHandle?.stop();
+    pendingRetry.stop();
   };
   const heartbeater = new Heartbeater(client2, injector, config2.identity.id, config2.heartbeat.interval_s * 1000, (err2) => {
     console.error("[meshl] heartbeat error:", err2);
@@ -31593,42 +31897,50 @@ async function runInjecting(config2, client2, stateDir, socketPath, ipcHandle, w
     console.error("[meshl] liveness error:", err2);
   }, onRoomGone) : null;
   liveness?.start();
+  const pendingRetry = startPendingWakeRetryLoop({
+    stateDir,
+    probe: () => injector.probe(),
+    deliver,
+    intervalMs: (config2.wake.tmux?.busy_retry_s ?? 10) * 1000
+  });
   const shutdown = () => {
     console.log("[meshl] stopping...");
     consumer.stop();
     nudgeHandle?.stop();
     dutyHandle?.stop();
     accessRefreshHandle?.stop();
+    pendingRetry.stop();
   };
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
   console.log(`[meshl] running — room=${config2.room.id} id=${config2.identity.id} socket=${socketPath}`);
   await consumer.start();
   await worksetScanner?.stop();
+  pendingRetry.stop();
   accessRefreshHandle?.stop();
   await liveness?.stop();
   await heartbeater.stop();
   await ipcHandle.close();
   try {
-    const pidPath = join8(stateDir, "daemon.pid");
-    if (existsSync7(pidPath) && parseInt(readFileSync8(pidPath, "utf8").trim(), 10) === process.pid) {
-      rmSync3(pidPath, { force: true });
+    const pidPath = join9(stateDir, "daemon.pid");
+    if (existsSync7(pidPath) && parseInt(readFileSync10(pidPath, "utf8").trim(), 10) === process.pid) {
+      rmSync4(pidPath, { force: true });
     }
   } catch {}
   console.log("[meshl] stopped");
 }
 async function cmdMcp(stateDir) {
-  const socketPath = join8(stateDir, "daemon.sock");
+  const socketPath = join9(stateDir, "daemon.sock");
   await runMcpStdio(socketPath);
 }
 async function cmdStop(configPath) {
   const config2 = loadConfig(configPath);
   const stateDir = resolveHome(config2.state_dir);
-  const pidPath = join8(stateDir, "daemon.pid");
+  const pidPath = join9(stateDir, "daemon.pid");
   if (!existsSync7(pidPath)) {
     die(`no daemon.pid in ${stateDir} — daemon not running? (start: meshl run --config ${configPath})`);
   }
-  const pid = parseInt(readFileSync8(pidPath, "utf8").trim(), 10);
+  const pid = parseInt(readFileSync10(pidPath, "utf8").trim(), 10);
   if (!Number.isInteger(pid))
     die(`invalid pid in ${pidPath}`);
   try {
@@ -31641,7 +31953,7 @@ async function cmdStop(configPath) {
     else
       die(`failed to stop pid ${pid}: ${err2.message}`);
   }
-  rmSync3(pidPath, { force: true });
+  rmSync4(pidPath, { force: true });
 }
 async function cmdValidate(configPath) {
   let config2;
@@ -31722,17 +32034,17 @@ async function cmdValidate(configPath) {
 async function cmdStatus(configPath) {
   const config2 = loadConfig(configPath);
   const stateDir = resolveHome(config2.state_dir);
-  const cursorPath = join8(stateDir, "wake_cursor.json");
+  const cursorPath = join9(stateDir, "wake_cursor.json");
   let cursorSeq = "none";
   if (existsSync7(cursorPath)) {
     try {
-      const raw = JSON.parse(readFileSync8(cursorPath, "utf8"));
-      cursorSeq = String(raw.seq);
+      const raw = JSON.parse(readFileSync10(cursorPath, "utf8"));
+      cursorSeq = raw.seq;
     } catch {
       cursorSeq = "unreadable";
     }
   }
-  let queueDepth = "unknown";
+  let unwokenGap = "unknown";
   const roomEntry = getRoom(config2.room.id);
   if (roomEntry) {
     try {
@@ -31740,19 +32052,21 @@ async function cmdStatus(configPath) {
       const client2 = buildClient(config2, secretBytes, roomEntry.token);
       const state = await client2.getState();
       const headSeq = state.head.seq;
-      const cursorNum = cursorSeq === "none" ? -1 : Number(cursorSeq);
-      queueDepth = String(Math.max(0, headSeq - cursorNum));
+      if (cursorSeq !== "unreadable") {
+        const cursorNum = cursorSeq === "none" ? -1 : cursorSeq;
+        unwokenGap = Math.max(0, headSeq - cursorNum);
+      }
     } catch {
-      queueDepth = "error";
+      unwokenGap = "error";
     }
   }
   let probeState = "n/a";
   let hookState = "n/a";
   if (config2.wake.backend === "tmux" && config2.wake.tmux) {
     const staleMs = (config2.wake.hook_busy_stale_s ?? 900) * 1000;
-    const stateFile = join8(stateDir, AGENT_STATE_FILE);
+    const stateFile = join9(stateDir, AGENT_STATE_FILE);
     try {
-      const raw = readFileSync8(stateFile, "utf8").trim();
+      const raw = readFileSync10(stateFile, "utf8").trim();
       const ageS = Math.round((Date.now() - statSync4(stateFile).mtimeMs) / 1000);
       hookState = raw === "busy" && ageS * 1000 > staleMs ? `busy (age ${ageS}s — STALE > ${Math.round(staleMs / 1000)}s, ignored → scrape)` : `${raw} (age ${ageS}s)`;
     } catch {
@@ -31766,19 +32080,16 @@ async function cmdStatus(configPath) {
       probeState = `error: ${e instanceof Error ? e.message : String(e)}`;
     }
   }
-  const lines = [
-    `room:        ${config2.room.id}`,
-    `wake_cursor: ${cursorSeq}`,
-    `queue_depth: ${queueDepth}`,
-    `hook_state:  ${hookState}`,
-    `probe:       ${probeState}`,
-    `state_dir:   ${stateDir}`
-  ];
-  if (probeState === "busy" && queueDepth !== "0" && queueDepth !== "unknown") {
-    lines.push(`hint:        probe=busy with ${queueDepth} event(s) waiting — the agent may be stuck at a`);
-    lines.push(`             prompt (login / permission / input). Attach the pane (tmux attach) and clear it;`);
-    lines.push(`             wakes resume once it returns to idle. \`meshl poke\` can't dismiss a login screen.`);
-  }
+  const lines = renderStatusLines({
+    roomId: config2.room.id,
+    cursorSeq,
+    unwokenGap,
+    pending: loadPendingWake(stateDir),
+    hookState,
+    probeState,
+    stateDir,
+    nowMs: Date.now()
+  });
   process.stdout.write(lines.join(`
 `) + `
 `);
@@ -31797,11 +32108,11 @@ async function cmdPoke(configPath, opts = { brief: false }) {
       const { secretBytes } = loadSecretBytes(config2);
       client2 = buildClient(config2, secretBytes, roomEntry.token);
       const state = await client2.getState();
-      const cursorPath = join8(stateDir, "wake_cursor.json");
+      const cursorPath = join9(stateDir, "wake_cursor.json");
       let cursorNum = -1;
       if (existsSync7(cursorPath)) {
         try {
-          cursorNum = JSON.parse(readFileSync8(cursorPath, "utf8")).seq;
+          cursorNum = JSON.parse(readFileSync10(cursorPath, "utf8")).seq;
         } catch {}
       }
       depth = String(Math.max(0, state.head.seq - cursorNum));
@@ -31817,37 +32128,11 @@ async function cmdPoke(configPath, opts = { brief: false }) {
     await stampWakeAfterPoke(stateDir, Date.now());
   }
 }
-function usage() {
-  process.stdout.write(`meshl — mesh listener daemon + MCP shim
-
-Commands:
-  run --config <path> [--foreground] [--force]
-                                       Start the daemon. Detaches to the background by default
-                                       (logs → <state_dir>/daemon.log); --foreground/-f stays attached;
-                                       refuses if one is already running for this config (--force replaces it).
-  stop --config <path>                 Stop the background daemon (SIGTERM via <state_dir>/daemon.pid).
-  status --config <path>               Show room, wake cursor, queue depth, hook state, probe.
-  poke   --config <path> [--brief]     Force-inject an inbox hint into the pane now (manual wake;
-                                       bypasses the idle/busy gate — operator override when stuck).
-                                       --brief sends the Intent I arrival pointer instead.
-  validate --config <path>             Check config, identity key, room reachability, wake wiring.
-  mcp --state-dir <dir>                Run the stdio MCP shim (proxies to a running daemon's socket).
-  hooks [--runtime claude|omp] --state-dir <dir>
-                                       Print idle/busy state hooks (the robust wake signal):
-                                       claude → .claude/settings.json JSON; omp → an --hook module.
-  exec [--workspace <dir>] [--state-dir <dir>] -- <agent cmd...>
-                                       Launch an agent in the mesh workspace with shim binDir
-                                       prepended to PATH (opt-in, sovereign; A2 reframe).
-  help                                 Show this help.
-
-wake.backend (in mesh.yml):  tmux (push into a pane) | mcp (pull-only, no tmux) | hybrid (both).
-`);
-}
 async function cmdExec(opts) {
   const resolvedWorkspace = resolveHome(opts.workspace);
   const resolvedStateDir = resolveHome(opts.stateDir);
-  const binDir = join8(resolvedStateDir, "shims");
-  const socketPath = join8(resolvedStateDir, "daemon.sock");
+  const binDir = join9(resolvedStateDir, "shims");
+  const socketPath = join9(resolvedStateDir, "daemon.sock");
   mkdirSync4(binDir, { recursive: true, mode: 448 });
   installShims(binDir, socketPath, resolvedWorkspace);
   const childEnv = buildExecEnv({
@@ -31872,7 +32157,7 @@ async function cmdExec(opts) {
   });
 }
 function cmdHooks(stateDir, runtime) {
-  const file = join8(stateDir, AGENT_STATE_FILE);
+  const file = join9(stateDir, AGENT_STATE_FILE);
   if (runtime === "omp") {
     process.stderr.write(`# Oh My Pi (omp) idle/busy hook. Save it, then launch the agent with --hook:
 ` + `#   meshl hooks --runtime omp --state-dir ${stateDir} > ~/mesh-agent/state-hook.ts
@@ -31918,10 +32203,10 @@ function cmdHooks(stateDir, runtime) {
   process.stdout.write(JSON.stringify(snippet, null, 2) + `
 `);
 }
-var isMainModule = typeof Bun !== "undefined" && Bun.main === fileURLToPath(import.meta.url);
+var isMainModule = typeof Bun !== "undefined" && Bun.main === fileURLToPath2(import.meta.url);
 if (!isMainModule && process.argv[1] !== undefined) {
   try {
-    isMainModule = fileURLToPath(import.meta.url) === realpathSync2(process.argv[1]);
+    isMainModule = fileURLToPath2(import.meta.url) === realpathSync2(process.argv[1]);
   } catch {}
 }
 if (isMainModule) {
@@ -31932,35 +32217,60 @@ if (isMainModule) {
     usage();
     process.exit(0);
   }
+  if (cmd === "--version" || cmd === "-V") {
+    process.stdout.write(`meshl v${getVersion()}
+`);
+    process.exit(0);
+  }
   try {
+    const spec = MESHL_FLAG_SPEC[cmd];
+    if (spec === undefined)
+      die(`Unknown command: ${cmd}. Run "meshl help" for usage.`);
+    const ddIdx = cmd === "exec" ? rest.indexOf("--") : -1;
+    const segment = ddIdx === -1 ? rest : rest.slice(0, ddIdx);
+    const agentCmd = ddIdx === -1 ? [] : rest.slice(ddIdx + 1);
+    const args = parseArgs(segment, MESHL_FLAG_ARITY);
+    if (args.flags.help !== undefined || args.flags.h !== undefined) {
+      usage();
+      process.exit(0);
+    }
+    if (args.flags.version !== undefined || args.flags.V !== undefined) {
+      process.stdout.write(`meshl v${getVersion()}
+`);
+      process.exit(0);
+    }
+    if (cmd === "exec" && ddIdx === -1)
+      die("usage: meshl exec [--workspace <dir>] [--state-dir <dir>] -- <agent cmd...>");
+    const invalid = validateAgainst(spec, MESHL_FLAG_ARITY, args);
+    if (invalid !== null)
+      die(`${invalid}. Run "meshl help" for usage.`);
+    if (args.positional.length > 0) {
+      const viaConfig = spec.includes("config") ? " (config comes from --config)" : "";
+      die(`unexpected argument "${args.positional[0]}" — meshl ${cmd} takes no arguments${viaConfig}. Run "meshl help" for usage.`);
+    }
     if (cmd === "mcp") {
-      const stateDir = flag(rest, "--state-dir");
+      const stateDir = flag(args, "state-dir");
       if (!stateDir)
         die("usage: meshl mcp --state-dir <dir>");
       await cmdMcp(resolveHome(stateDir));
     } else if (cmd === "hooks") {
-      const stateDir = flag(rest, "--state-dir");
+      const stateDir = flag(args, "state-dir");
       if (!stateDir)
         die("usage: meshl hooks [--runtime claude|omp] --state-dir <dir>");
-      const runtime = (flag(rest, "--runtime") ?? "claude").toLowerCase();
+      const runtime = (flag(args, "runtime") ?? "claude").toLowerCase();
       if (runtime !== "claude" && runtime !== "omp")
         die(`unknown --runtime "${runtime}" (use claude or omp)`);
       cmdHooks(resolveHome(stateDir), runtime);
     } else if (cmd === "exec") {
-      const ddIdx = rest.indexOf("--");
-      if (ddIdx === -1)
-        die("usage: meshl exec [--workspace <dir>] [--state-dir <dir>] -- <agent cmd...>");
-      const execArgs = rest.slice(0, ddIdx);
-      const agentCmd = rest.slice(ddIdx + 1);
       if (agentCmd.length === 0)
         die("meshl exec: agent command must follow '--'");
-      const workspace = flag(execArgs, "--workspace") ?? process.cwd();
-      const stateDir = flag(execArgs, "--state-dir") ?? "~/.mesh/state";
+      const workspace = flag(args, "workspace") ?? process.cwd();
+      const stateDir = flag(args, "state-dir") ?? "~/.mesh/state";
       await cmdExec({ workspace, stateDir, agentCmd });
     } else {
-      const configPath = flag(rest, "--config") ?? "mesh.yml";
+      const configPath = flag(args, "config") ?? "mesh.yml";
       if (cmd === "run") {
-        await cmdRun(configPath, { foreground: hasFlag(rest, "--foreground") || hasFlag(rest, "-f"), force: hasFlag(rest, "--force") });
+        await cmdRun(configPath, { foreground: flagBool(args, "foreground") || flagBool(args, "f"), force: flagBool(args, "force") });
       } else if (cmd === "stop") {
         await cmdStop(configPath);
       } else if (cmd === "validate") {
@@ -31968,9 +32278,9 @@ if (isMainModule) {
       } else if (cmd === "status") {
         await cmdStatus(configPath);
       } else if (cmd === "poke") {
-        await cmdPoke(configPath, { brief: hasFlag(rest, "--brief") });
+        await cmdPoke(configPath, { brief: flagBool(args, "brief") });
       } else {
-        die(`Unknown command: ${cmd}. Run "meshl help" for usage.`);
+        die(`meshl: no dispatch branch for "${cmd}" — add one in main.ts`);
       }
     }
   } catch (e) {

@@ -3,6 +3,90 @@
 All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.25.0] — 2026-07-17
+
+### Changed
+
+- **BREAKING (mesh CLI):** trailing positional arguments beyond a command's
+  declared shape are now rejected before any side effect on every command
+  (previously they were silently dropped — `mesh post hello world` silently
+  dropped `world`).
+- **Internal:** one shared usage-grammar parser (`cli/src/usage-spec.ts`) now
+  powers both the cli and daemon usage-sync tests; the two bespoke test
+  parsers are deleted.
+
+### Added
+
+- **MIT license for the published dist bundles.** `publish-dist.sh` stages and
+  pushes a LICENSE file into the public dist repo (excluded from the bundle
+  hash, so licensing never bumps the content-addressed version) and stamps
+  `"license": "MIT"` into the generated package.json; the mesh source
+  repository is separate and unaffected.
+
+## [1.24.0] — 2026-07-17
+
+### Changed
+
+- **BREAKING (meshl CLI):** Unknown flags AND trailing positionals are now
+  rejected before any side effect on every subcommand (previously they were
+  silently ignored); `--help`/`-h`/`--version`/`-V` now short-circuit at the
+  top level and on every subcommand; boolean flags given `=values` (e.g. `--all=true`) refuse
+  (mesh + meshl); value flags refuse when the value is missing or `--`-leading
+  (mesh + meshl).
+- **Internal:** the 24 inert `declare module "cloudflare:test"` `ProvidedEnv`
+  augmentation blocks in the room test files are removed — dead code since the
+  pool-workers 0.18 upgrade, which types `env` from the wrangler-generated
+  `worker-configuration.d.ts`.
+
+### Fixed
+
+- **Unknown flags can no longer derail command resolution.** An unknown flag
+  used to consume the following token as its "value", which could swallow a
+  subcommand word and produce a confusing unknown-subcommand error instead of
+  naming the bad flag (`mesh fs --typo put a.ts` now refuses with
+  `unknown flag --typo`). Unknown flags never consume the next token.
+- **`meshl exec` docs used a flag that never existed.** `docs/operating.md`
+  showed `meshl exec --config mesh.yml -- <agent-cmd>`; `exec` only takes
+  `--workspace`/`--state-dir` (`--config` was silently ignored before, and is
+  refused now). Examples corrected.
+
+## [1.23.0] — 2026-07-16
+
+### Added
+
+- **CI workflow.** Typechecking, both test projects, and the docs build now run
+  in CI.
+- **Faster first run and clearer support paths.** The complete copy-paste first
+  run now sits in the landing hero itself (visible on the first screen at
+  1280×800) and opens the Getting Started guide, and a Get help & feedback page
+  plus issue templates ship to the public dist repo.
+- **Web error recovery links.** Room Worker HTML 404s and room-view credential
+  errors now point users to the relevant recovery path.
+
+### Fixed
+
+- **Wake delivery is now durable (Intent M P0).** A digest dropped on a busy or
+  gone pane is persisted to `state_dir/pending_wake.json`, retried at the next
+  idle boundary, and survives daemon restart. Previously the wake cursor
+  advanced past the batch and the wake was silently lost.
+- **The test harness race that intermittently killed green runs is gone.**
+  Vitest 4.1 + `@cloudflare/vitest-pool-workers` 0.18 (lockstep upgrade): the
+  0.5.x isolated-storage teardown race ("Isolated storage failed" on WAL/journal
+  sidecars) aborted otherwise-green suites locally and on CI. `bun run test` runs
+  both projects in one process again, verified 3× green under load.
+- **`meshl` stops promptly and never strands a deferred wake.** The pending-wake
+  retry loop now stops with the daemon on SIGINT/SIGTERM (and when the room is
+  gone), and the pending record is written atomically (write-then-rename), so a
+  crash mid-write can never corrupt it.
+
+### Changed
+
+- **BREAKING (CLI):** Unknown flags are now rejected before any side effect,
+  with a nearest-match hint. Previously `mesh post --body hi --wat` exited 0.
+- **`meshl status` fields.** `queue_depth` is renamed to `unwoken_log_gap`
+  because it counts entries that subscriptions never matched, not delivery
+  lag. A new `pending_wake` line shows a deferred wake.
+
 ## [1.22.0] — 2026-07-14
 
 ### Changed
