@@ -23,6 +23,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   deliveries always exclude `.mesh`/`.meshignore`, room writes reject those
   paths, hydration refuses both reserved room paths and a reserved destination
   root, and legacy reserved room entries remain deletable for cleanup.
+- Manager relaunches now force a real document navigation with a fresh,
+  non-secret query nonce, recovering even when a browser reuses an ended tab
+  running an older bundle. The current bundle retains fragment-reload defense
+  in depth; the ended-session page and CLI distinguish stale-tab lifetime from
+  broker lifetime, direct users to the tab opened or refreshed by `mesh ui`,
+  and name the owner-terminal `Ctrl-C` restart fallback.
 - The manager's unattached-workspace state now directs users to `mesh fs put .`
   for an existing project or `mesh fs hydrate` for an empty checkout instead of
   referring to a nonexistent `mesh attach` command.

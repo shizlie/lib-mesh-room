@@ -1339,14 +1339,27 @@ The local pane requires that membership's first attached default. There is no st
 project or `mesh fs hydrate` for an empty checkout, then reselect the room. `mesh rooms`
 prints each membership's registered default.
 
-The launch URL carries a one-time token in its fragment. The SPA exchanges it
-for an in-memory `HttpOnly`/`SameSite=Strict` session cookie, then removes the
-fragment; Host, Origin, `X-Mesh-UI`, and cookie checks guard the API. Any API
-`401` replaces all panes with `Session ended — run mesh ui again.` Relaunch the
-command to recover. Because the broker listens only on loopback, off-machine
-access is impossible. The one-time launch-token/session exchange protects
-localhost access; same-machine process or URL snooping is outside the current
-threat model.
+The launch URL carries a one-time token in its fragment and an independent,
+non-secret `launch=` navigation nonce in its query. The query changes on every
+launch, forcing a real document navigation even when the platform opener reuses
+an old same-origin tab whose bundle has no relaunch listener. The current SPA
+also watches for a new valid `#s=` fragment and forces a document reload as
+defense in depth. Startup removes both the fragment and navigation nonce,
+exchanges the token for an in-memory `HttpOnly`/`SameSite=Strict` session
+cookie, and preserves an optional `focus` query. Host, Origin, `X-Mesh-UI`, and
+cookie checks guard the API.
+
+The terminal owns the broker; the browser owns its tabs. Stopping the owner
+does not close its tabs, and their in-memory session cannot survive a broker
+restart. Any API `401` therefore replaces the panes with a recovery page that
+states the manager may still be live: run `mesh ui`, use the tab it opens or
+refreshes, and, only if that authenticated tab also fails, stop the owner
+terminal with `Ctrl-C` and run `mesh ui` again. `mesh ui --print` is the
+fallback when the platform opener surfaces no authenticated tab. Because the
+broker listens only on loopback,
+off-machine access is impossible. The one-time launch-token/session exchange
+protects localhost access; same-machine process or URL snooping is outside the
+current threat model.
 
 The manager is read-only for files and cannot join or create rooms. It does not
 replace `mesh open`: that command still opens the unchanged single-room Worker
