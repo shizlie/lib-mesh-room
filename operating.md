@@ -266,11 +266,18 @@ manages branches, commits, or history; that stays git's job (CONTEXT §"Not a wo
 
 **Identity contract:** a file's identity is `normalizeId(path relative to the workspace
 root)` — identical in the owner's folder, the room tree, and every agent's folder; byte
-freshness (in sync / ahead / behind / diverged) is orthogonal and tracked per-machine (see
-`mesh fs status`). Every fs verb below resolves local bytes against ONE workspace root,
-default the current directory (files land in place — no `.mesh/fs` shadow copy). `--root
-<dir>` overrides the root; `--into <dir>` remains as an explicit alias for one-off scratch
-staging (`--into` wins if both are given).
+freshness (in sync / ahead / behind / diverged) is orthogonal and tracked per folder (see
+`mesh fs status`). Local files hydrate in place under one normal project root; there is no
+`.mesh/fs` shadow copy.
+
+Root resolution is intentionally split. Mutating verbs (`fs put/get/hydrate/edit` and
+`fs grep --hydrate`) use explicit `--root`/`--into` → nearest enclosing attachment → cwd,
+then attach that root. Read-only `fs status`/`fs diff`/`doctor` use explicit root → enclosing
+attachment → the membership's first attached default → refuse. `fs ls` uses its explicit
+root or cwd for the local-size column but does not attach it; plain `fs grep` is remote-only.
+The first attachment becomes the membership default, and later checkouts never replace it
+silently. Folder metadata lives under reserved `.mesh/` and is never uploaded, even with
+`fs put --all`.
 
 | command | action |
 |---------|--------|
@@ -1326,6 +1333,11 @@ card reports persisted registration and liveness, wake cursor, pending wake,
 and hook state when a daemon is registered. Room switching stops the previous
 feed and stale local requests. Membership rows are real buttons, grouped by
 identity, with roving arrow-key focus and `aria-current` selection.
+
+The local pane requires that membership's first attached default. There is no standalone
+`mesh attach` command: from the intended project root, run `mesh fs put .` for an existing
+project or `mesh fs hydrate` for an empty checkout, then reselect the room. `mesh rooms`
+prints each membership's registered default.
 
 The launch URL carries a one-time token in its fragment. The SPA exchanges it
 for an in-memory `HttpOnly`/`SameSite=Strict` session cookie, then removes the

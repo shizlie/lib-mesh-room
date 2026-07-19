@@ -5,6 +5,28 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- File-plane commands now treat a normal project folder as the workspace root:
+  the first mutating command attaches it, later nested invocations reuse the
+  nearest enclosing attachment, and read-only commands can fall back to that
+  membership's first attached workspace. The user guide and demos now document
+  this model, the sync-state loop, and manager-based local browsing end to end.
+- Demo 2 now runs its owner, fixer, and reviewer from one shared project
+  folder while keeping identity state and startup contracts separate. The
+  guide distinguishes optional independent checkouts from true access
+  isolation: room ACLs cannot hide bytes already readable on a shared disk.
+
+### Fixed
+
+- Reserved local state cannot cross the room boundary: `fs put` and directory
+  deliveries always exclude `.mesh`/`.meshignore`, room writes reject those
+  paths, hydration refuses both reserved room paths and a reserved destination
+  root, and legacy reserved room entries remain deletable for cleanup.
+- The manager's unattached-workspace state now directs users to `mesh fs put .`
+  for an existing project or `mesh fs hydrate` for an empty checkout instead of
+  referring to a nonexistent `mesh attach` command.
+
 ## [1.28.1] — 2026-07-19
 
 ### Fixed

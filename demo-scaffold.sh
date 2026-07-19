@@ -6,8 +6,8 @@
 #   2. an owner identity + the room,
 #   3. a SHARED WORKSPACE seeded with a deliberately-buggy TODO backend
 #      (examples/todo-backend) — `toggle()` never un-completes a todo; a test fails,
-#   4. two teammates — `fixer` and `reviewer` — each with its own identity, operating
-#      contract (CLAUDE.md), mesh.yml, and (in live mode) a launched agent + listener.
+#   4. two teammates — `fixer` and `reviewer` — each with its own identity, startup
+#      contract, mesh.yml, and (in live mode) a launched agent + listener.
 #
 # Then it prints a dev-onboarding card: how files behave in the shared workspace
 # (the per-extension write policy), how to inspect it, and the single command that
@@ -103,11 +103,11 @@ echo "Owner harry@hcproduct created room $ROOM_ID"
 MESH_HOME="$OWNER_HOME" $MESH fs config write open >/dev/null  # S-K5/S-K6: new-room genesis is write-closed; teammates write below
 
 # ── the owner's project folder: a real local copy of the buggy backend ─────────────
-# Dropbox semantics (CONTEXT §12.7): every fs verb resolves local bytes against ONE
-# workspace root (default cwd); files hydrate IN PLACE, no shadow dir. So a participant's
-# workspace is just an ordinary folder on disk. We copy the fixture into a demo-owned
-# folder (cleanup is one rm; a real project can live anywhere) and seed the room FROM it,
-# so the owner's `fs status`/`fs ls -f` read in-sync (local == room) — not an empty watcher.
+# Dropbox semantics (CONTEXT §12.7): local bytes live in one normal workspace root,
+# hydrate in place, and never use a shadow directory. The first mutating fs command
+# attaches that root; later commands can find it from nested directories via `.mesh/`.
+# We copy the fixture into a demo-owned folder (cleanup is one rm; a real project can
+# live anywhere) and seed the room FROM it, so the owner's status starts in sync.
 FIXTURE=""
 for cand in "$ROOT/examples/todo-backend" "$SCRIPT_DIR/todo-backend"; do
   [ -n "$cand" ] && [ -d "$cand" ] && { FIXTURE="$cand"; break; }
@@ -127,10 +127,11 @@ mkdir -p "$CHARTER_DIR/roles"
 cat > "$CHARTER_DIR/room.md" <<'EOF'
 # todo-demo — room charter
 
-This room coordinates a shared-workspace bug fix. The code under repair — a deliberately
-buggy TODO backend — lives in the room's file plane (`mesh fs ls`/`get`/`grep`/`put`), not in
-any one participant's local checkout: the moment one participant `fs put`s a file, every
-other participant's `fs get`/`fs grep` sees the new bytes.
+This room coordinates a shared-workspace bug fix. The deliberately buggy TODO backend is
+published in the room's canonical file plane (`mesh fs ls`/`get`/`grep`/`put`). Participants
+on one machine may use one local checkout; another folder or machine can hydrate the same
+published paths. A successful `fs put` makes the new room version available to every identity
+whose grants permit it.
 
 ## Wake signal
 
@@ -188,9 +189,9 @@ valid outcome, not a failure.
 - Always include a non-empty `--body` on every `accept` and `reject`.
 - After acting on a wake, stop. Do not poll, loop, or invent work.
 EOF
-MESH_HOME="$OWNER_HOME" $MESH fs put "$CHARTER_DIR/room.md" --as charter/room.md >/dev/null
-MESH_HOME="$OWNER_HOME" $MESH fs put "$CHARTER_DIR/roles/fixer.md" --as charter/roles/fixer.md >/dev/null
-MESH_HOME="$OWNER_HOME" $MESH fs put "$CHARTER_DIR/roles/reviewer.md" --as charter/roles/reviewer.md >/dev/null
+MESH_HOME="$OWNER_HOME" $MESH fs put "$CHARTER_DIR/room.md" --root "$CHARTER_DIR" --as charter/room.md >/dev/null
+MESH_HOME="$OWNER_HOME" $MESH fs put "$CHARTER_DIR/roles/fixer.md" --root "$CHARTER_DIR" --as charter/roles/fixer.md >/dev/null
+MESH_HOME="$OWNER_HOME" $MESH fs put "$CHARTER_DIR/roles/reviewer.md" --root "$CHARTER_DIR" --as charter/roles/reviewer.md >/dev/null
 echo "Room charter seeded: charter/room.md, charter/roles/{fixer,reviewer}.md"
 
 # ── teammate setup ────────────────────────────────────────────────────────────────
@@ -199,7 +200,7 @@ setup_teammate() {
   local id="$1" skill="$2" contract="$3" perf="$4" pane="$5"
   local name="${id%@*}"
   local home="$LIVE/$name"
-  local work="$LIVE/$name-work"
+  local work="$OWNER_FS"
   MESH_HOME="$home" $MESH keygen --id "$id" >/dev/null
   MESH_HOME="$home" $MESH join "$ROOM_URL/v1/rooms/$ROOM_ID" "$INVITE" >/dev/null
 
@@ -214,7 +215,7 @@ setup_teammate() {
     [ -n "$cand" ] && [ -f "$cand" ] && { src="$cand"; break; }
   done
   [ -n "$src" ] || { echo "contract '$contract' not found" >&2; exit 1; }
-  cp "$src" "$work/CLAUDE.md"
+  cp "$src" "$LIVE/$name-contract.md"
   cat > "$LIVE/$name.yml" <<EOF
 identity:
   id: $id
@@ -251,7 +252,8 @@ EOF
 export MESH_HOME="$home"
 export PATH="$AGENT_PATH"
 cd "$work"
-exec "$CLAUDE_BIN" --strict-mcp-config --mcp-config "$LIVE/$name-mcp.json" --dangerously-skip-permissions
+exec "$CLAUDE_BIN" --strict-mcp-config --mcp-config "$LIVE/$name-mcp.json" \
+  --append-system-prompt-file "$LIVE/$name-contract.md" --dangerously-skip-permissions
 EOF
     chmod +x "$LIVE/launch-$name.sh"
   fi
@@ -264,9 +266,9 @@ setup_teammate reviewer@build  review reviewer.md  deliver   "$SESSION:0.2"
 
 # ── --simulate: CLI-drive the entire fix (no Claude), then assert it landed ─────────
 simulate() {
-  local fwork="$LIVE/fixer-work" rwork="$LIVE/reviewer-work" ocheck="$LIVE/owner-check"
+  local work="$OWNER_FS"
   echo
-  echo "── SIMULATE (no Claude): owner announces → fixer fixes in the shared workspace → reviewer accepts ──"
+  echo "── SIMULATE (no Claude): owner announces → fixer edits the shared folder → reviewer accepts ──"
   MESH_HOME="$OWNER_HOME" $MESH announce fix-toggle --room "$ROOM_ID" \
     --body "toggle() never un-completes a todo; fix src/todos.ts" --verdict-by reviewer@build >/dev/null
   echo "[owner]    announced fix-toggle (verdict: reviewer@build)"
@@ -279,41 +281,45 @@ simulate() {
   MESH_HOME="$LIVE/fixer" $MESH inbox --mark >/dev/null 2>&1 || true
   MESH_HOME="$LIVE/fixer" $MESH claim fix-toggle >/dev/null
   echo "[fixer]    claimed fix-toggle"
-  rm -rf "$fwork"; mkdir -p "$fwork"
-  MESH_HOME="$LIVE/fixer" $MESH fs hydrate --into "$fwork" >/dev/null
-  echo "[fixer]    hydrated the shared workspace -> $fwork"
-  if ( cd "$fwork" && bun test ) >/dev/null 2>&1; then echo "[fixer]    UNEXPECTED: green before fix"; return 1; fi
+  if ( cd "$work" && bun test ) >/dev/null 2>&1; then echo "[fixer]    UNEXPECTED: green before fix"; return 1; fi
   echo "[fixer]    bun test FAILS (the planted bug) — confirmed"
-  sed -i.bak 's/todo\.done = true;/todo.done = !todo.done;/' "$fwork/src/todos.ts" && rm -f "$fwork/src/todos.ts.bak"
-  ( cd "$fwork" && bun test ) >/dev/null 2>&1 || { echo "[fixer]    fix did not green the suite"; return 1; }
-  echo "[fixer]    applied one-line fix; bun test GREEN"
-  ( cd "$fwork" && MESH_HOME="$LIVE/fixer" $MESH fs put src/todos.ts --as src/todos.ts ) >/dev/null
-  echo "[fixer]    fs put src/todos.ts -> shared workspace (now live for everyone)"
-  MESH_HOME="$LIVE/fixer" $MESH deliver fix-toggle --dir "$fwork" \
+  sed -i.bak 's/todo\.done = true;/todo.done = !todo.done;/' "$work/src/todos.ts" && rm -f "$work/src/todos.ts.bak"
+  ( cd "$work" && bun test ) >/dev/null 2>&1 || { echo "[fixer]    fix did not green the suite"; return 1; }
+  echo "[fixer]    applied one-line fix in the shared folder; bun test GREEN"
+  local fixer_status reviewer_status
+  fixer_status="$(cd "$work" && MESH_HOME="$LIVE/fixer" $MESH fs status src/todos.ts)"
+  reviewer_status="$(cd "$work" && MESH_HOME="$LIVE/reviewer" $MESH fs status src/todos.ts)"
+  echo "$fixer_status" | grep -q "ahead.*src/todos.ts" || { echo "[fixer]    FAIL: fixer did not see shared edit as ahead"; return 1; }
+  echo "$reviewer_status" | grep -q "ahead.*src/todos.ts" || { echo "[reviewer] FAIL: reviewer did not see the same shared edit as ahead"; return 1; }
+  echo "[shared]   both identities classify the unpublished local edit as ahead"
+  ( cd "$work" && MESH_HOME="$LIVE/fixer" $MESH fs put src/todos.ts ) >/dev/null
+  echo "[fixer]    fs put src/todos.ts -> room tip (shared folder remains in sync)"
+  fixer_status="$(cd "$work" && MESH_HOME="$LIVE/fixer" $MESH fs status src/todos.ts)"
+  reviewer_status="$(cd "$work" && MESH_HOME="$LIVE/reviewer" $MESH fs status src/todos.ts)"
+  echo "$fixer_status" | grep -q "in-sync.*src/todos.ts" || { echo "[fixer]    FAIL: fixer status did not return to in-sync"; return 1; }
+  echo "$reviewer_status" | grep -q "in-sync.*src/todos.ts" || { echo "[reviewer] FAIL: reviewer status did not share the updated lineage"; return 1; }
+  echo "[shared]   both identities now classify src/todos.ts as in-sync"
+  MESH_HOME="$LIVE/fixer" $MESH deliver fix-toggle --dir "$work" \
     --body "fixed toggle in src/todos.ts; tests green (shared workspace)" >/dev/null
   echo "[fixer]    delivered fix-toggle"
 
   MESH_HOME="$LIVE/reviewer" $MESH inbox --mark >/dev/null 2>&1 || true
-  rm -rf "$rwork"; mkdir -p "$rwork"
-  MESH_HOME="$LIVE/reviewer" $MESH fs hydrate --into "$rwork" >/dev/null
-  ( cd "$rwork" && bun test ) >/dev/null 2>&1 || {
-    echo "[reviewer] shared-workspace tests NOT green — rejecting"
+  ( cd "$work" && bun test ) >/dev/null 2>&1 || {
+    echo "[reviewer] shared-folder tests NOT green — rejecting"
     MESH_HOME="$LIVE/reviewer" $MESH reject fix-toggle --body "tests still failing" >/dev/null; return 1; }
-  echo "[reviewer] read src/todos.ts LIVE from the shared workspace; bun test GREEN"
+  echo "[reviewer] read src/todos.ts from the same shared folder; bun test GREEN"
   MESH_HOME="$LIVE/reviewer" $MESH accept fix-toggle --body "toggle flips both ways now; tests pass" >/dev/null
   echo "[reviewer] accepted fix-toggle"
 
-  rm -rf "$ocheck"; mkdir -p "$ocheck"
-  MESH_HOME="$OWNER_HOME" $MESH fs get src/todos.ts --into "$ocheck" >/dev/null
   local st; st="$(MESH_HOME="$OWNER_HOME" $MESH state 2>/dev/null | grep -i fix-toggle || true)"
   echo
   echo "── RESULT ──"
   echo "  claims: ${st:-<none>}"
-  if grep -q 'todo.done = !todo.done' "$ocheck/src/todos.ts" 2>/dev/null && echo "$st" | grep -qiE 'done'; then
-    echo "  PASS: owner (a different participant) sees the fixed src/todos.ts in the shared workspace, fix-toggle DONE"
+  if grep -q 'todo.done = !todo.done' "$work/src/todos.ts" 2>/dev/null && echo "$st" | grep -qiE 'done'; then
+    echo "  PASS: owner, fixer, and reviewer shared one project folder; the room records fix-toggle DONE"
     return 0
   fi
-  echo "  FAIL: fix not visible to owner or task not DONE"; return 1
+  echo "  FAIL: shared-folder fix missing or task not DONE"; return 1
 }
 if [ -n "$SIMULATE" ]; then simulate; rc=$?; echo "  Tear down: bash $0 --clean"; exit $rc; fi
 
@@ -326,15 +332,14 @@ if [ -z "$NO_AGENTS" ]; then
   tmux split-window -t "$SESSION:0.0" -v
   tmux split-window -t "$SESSION:0.1" -v
   tmux select-layout -t "$SESSION:0" even-vertical
-  # One row per agent: the agent pane (left) beside a live file pane for ITS OWN
-  # folder (right) — the three folders are stand-ins for three machines, so each row
-  # shows one "machine" hydrating independently. Bottom row = the talk feed.
-  # After these -h splits the (positional) indices are:
-  #   0.0 fixer agent · 0.1 fixer files · 0.2 reviewer agent · 0.3 reviewer files · 0.4 talk
+  # One row per agent: the agent pane (left) beside that identity's refreshing
+  # room tree + sync status for the SAME shared project folder (right).
+  # Bottom row = the talk feed. After these -h splits the positional indices are:
+  #   0.0 fixer agent · 0.1 fixer room/files · 0.2 reviewer agent · 0.3 reviewer room/files · 0.4 talk
   tmux split-window -t "$SESSION:0.0" -h
   tmux split-window -t "$SESSION:0.2" -h
-  tmux send-keys -t "$SESSION:0.1" "MESH_HOME='$LIVE/fixer' $MESH fs ls -f --room $ROOM_ID --into '$LIVE/fixer-work'" Enter
-  tmux send-keys -t "$SESSION:0.3" "MESH_HOME='$LIVE/reviewer' $MESH fs ls -f --room $ROOM_ID --into '$LIVE/reviewer-work'" Enter
+  tmux send-keys -t "$SESSION:0.1" "while true; do clear; MESH_HOME='$LIVE/fixer' $MESH fs ls --room $ROOM_ID --into '$OWNER_FS'; echo; MESH_HOME='$LIVE/fixer' $MESH fs status src/todos.ts --room $ROOM_ID --root '$OWNER_FS'; sleep 2; done" Enter
+  tmux send-keys -t "$SESSION:0.3" "while true; do clear; MESH_HOME='$LIVE/reviewer' $MESH fs ls --room $ROOM_ID --into '$OWNER_FS'; echo; MESH_HOME='$LIVE/reviewer' $MESH fs status src/todos.ts --room $ROOM_ID --root '$OWNER_FS'; sleep 2; done" Enter
   tmux send-keys -t "$SESSION:0.4" "MESH_HOME='$OWNER_HOME' $MESH log -f --room $ROOM_ID" Enter
   tmux send-keys -t "$SESSION:0.0" "bash $LIVE/launch-fixer.sh" Enter
   tmux send-keys -t "$SESSION:0.2" "bash $LIVE/launch-reviewer.sh" Enter
@@ -349,7 +354,7 @@ if [ -z "$NO_AGENTS" ]; then
   done
   sleep 3
   echo "Daemons running (logs: /tmp/mesh-{fixer,reviewer}-daemon.log)"
-  echo "  Watch:  tmux attach -t $SESSION   (row 1 = fixer + its files, row 2 = reviewer + its files, row 3 = talk feed)"
+  echo "  Watch:  tmux attach -t $SESSION   (row 1 = fixer + shared files, row 2 = reviewer + shared files, row 3 = talk feed)"
 fi
 
 # ── onboarding card ─────────────────────────────────────────────────────────────
@@ -361,29 +366,33 @@ cat <<EOF
   Room URL: $ROOM_URL      Invite: $INVITE      (share both to join from another machine)
 
   THE FILE PLANE — "Dropbox for agents". The room holds the canonical copy of the
-  files; a workspace folder syncs to/from it (workspace root = your cwd). Files
-  hydrate IN PLACE in a normal folder — no shadow dir.
-    owner (you): $OWNER_FS   ← real local copy, already IN SYNC with the room
-    fixer:       $LIVE/fixer-work        ← its own endpoint (starts empty, hydrates on demand)
-    reviewer:    $LIVE/reviewer-work     ← its own endpoint
+  files; owner, fixer, and reviewer work in ONE normal project folder on this machine:
+    shared project: $OWNER_FS   ← all three seats; already IN SYNC with the room
+    owner identity:    $OWNER_HOME
+    fixer identity:    $LIVE/fixer
+    reviewer identity: $LIVE/reviewer
 
-  In a REAL project on one machine, agents can simply share your project folder —
-  the room still gives the task feed, wakes, leases, the signed log, and merge/
-  stale-write protection on every put. The demo gives each agent its OWN folder to
-  make the sync loop VISIBLE ('↓ behind' → fs get → '=') and to rehearse Demo 3:
-  a second folder behaves exactly like a second machine. What the room adds either way:
-    • byte distribution: each endpoint gets its own copy, hydrated on demand (fs get).
+  MESH_HOME selects credentials, role, and grants; it does not select where project
+  files live. The shared folder's .mesh/ attachment and lineage are room-scoped, so a
+  successful get/put by one profile advances the same local sync base for the others.
+
+  Use a different folder for another machine, independent hydration, or access
+  isolation. Mesh grants protect room reads/writes, not bytes already readable on the
+  same disk; strict confidentiality also needs OS users, containers, VMs, or machines.
+
+  What the room adds above the shared disk:
+    • remote byte distribution: another endpoint hydrates the room tip with fs get.
     • write coordination: merge-on-write (3-way for code), stale-write protection,
       exclusive leases, prose CRDT, no silent loss — a plain folder gives none of this.
 
-  SEE IT — from the owner's folder (cd first; workspace root = your cwd):
+  SEE IT — the shared folder is already attached (mesh rooms shows the default):
     cd $OWNER_FS
-    MESH_HOME=$OWNER_HOME $MESH fs status         # all '=' in-sync — your copy matches the room
-    MESH_HOME=$OWNER_HOME $MESH fs ls -f          # live tree: sizes, last editor, leases
-    # after the fixer fixes + puts src/todos.ts, the room tip moves past your copy:
-    MESH_HOME=$OWNER_HOME $MESH fs status         # src/todos.ts now '↓ behind' — your copy is stale
-    MESH_HOME=$OWNER_HOME $MESH fs diff src/todos.ts   # your copy vs the room tip (read-only)
-    MESH_HOME=$OWNER_HOME $MESH fs get src/todos.ts    # pull the new bytes → back to '=' in-sync
+    MESH_HOME=$OWNER_HOME $MESH rooms
+    MESH_HOME=$OWNER_HOME $MESH fs status         # all '=' — shared folder matches the room
+    MESH_HOME=$LIVE/fixer $MESH fs ls             # fixer's granted room tree + local byte sizes
+    MESH_HOME=$LIVE/reviewer $MESH fs ls          # reviewer's granted room tree + same local bytes
+    # while the fixer has an unpublished edit, each identity's 'fs status' sees '↑ ahead';
+    # after its fs put succeeds, shared lineage advances and both return to '='.
 
   CONFLICT RESOLUTION IS BY FILE TYPE:
     code  .ts .js .py …  →  merge      3-way auto-merge on 'fs put'; real overlaps return
@@ -394,15 +403,16 @@ cat <<EOF
   KICK IT OFF  (one human sentence — the whole demo)
     $ANNOUNCE_CMD
 
-  Then: fixer wakes on 'announce' → fs grep/get to read → fixes src/todos.ts → 'fs put'
-  → delivers. reviewer wakes on 'deliver' → fs get + bun test → accepts. Watch both
-  planes: 'mesh log -f' (TALK) and 'mesh fs ls -f' (SHARE).
+  Then: fixer wakes on 'announce' → reads the shared folder → fixes src/todos.ts →
+  'fs put' → delivers. reviewer wakes on 'deliver' → reads the same bytes + bun test →
+  accepts. Watch both planes: 'mesh log -f' (TALK) and the refreshing 'fs ls' + 'fs status' panes (SHARE).
 EOF
 if [ -n "$NO_AGENTS" ]; then
   cat <<EOF
-  (--no-agents) Drive the teammates by hand from their homes:
-    fixer:     MESH_HOME=$LIVE/fixer    $MESH ...   (claim fix-toggle, fs get/put, deliver)
-    reviewer:  MESH_HOME=$LIVE/reviewer $MESH ...   (fs get, accept fix-toggle)
+  (--no-agents) Drive both teammates from the shared project folder:
+    cd $OWNER_FS
+    fixer:     MESH_HOME=$LIVE/fixer    $MESH ...   (claim, edit locally, fs put, deliver)
+    reviewer:  MESH_HOME=$LIVE/reviewer $MESH ...   (inspect local bytes, test, accept)
 EOF
 fi
 echo "  Tear down:  bash $0 --clean"
