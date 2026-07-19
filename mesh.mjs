@@ -80,9 +80,9 @@ process.emitWarning = (warning, ...rest) => {
 };
 
 // src/config.ts
-import * as fs3 from "node:fs";
-import * as path3 from "node:path";
-import * as os2 from "node:os";
+import * as fs5 from "node:fs";
+import * as path5 from "node:path";
+import * as os3 from "node:os";
 
 // ../../node_modules/@noble/ed25519/index.js
 /*! noble-ed25519 - MIT License (c) 2019 Paul Miller (paulmillr.com) */
@@ -1264,6 +1264,7 @@ var PERFORMATIVE_SET = {
   "escalate.ack": true,
   "system.checkpoint": true
 };
+var CONDITIONS = ["working", "stuck", "gone"];
 var ROOM_ONLY = {
   escalate: true,
   "system.genesis": true,
@@ -1283,6 +1284,134 @@ var PARTICIPANT_PERFORMATIVES = Object.keys(PERFORMATIVE_SET).filter((p) => !(p 
 var COLLAB_LANE_EXCLUDE = ["file.*", "system.*"];
 // ../proto/src/composer.ts
 var GRADES = Object.keys(GRADE_ORDER);
+var COMPOSER_SPEC = [
+  {
+    performative: "request",
+    label: "Request",
+    hint: "Ask the room for something (free-text chat).",
+    fields: [
+      { target: "body", label: "Message", type: "text", required: true, sample: "Can someone look at the flaky CI?" },
+      { target: "thread", label: "Thread", type: "text", required: false, sample: "ci-flake" }
+    ]
+  },
+  {
+    performative: "inform",
+    label: "Inform",
+    hint: "Share information — no reply expected.",
+    fields: [
+      { target: "body", label: "Message", type: "text", required: true, sample: "Deploy finished, all green." },
+      { target: "task_ref", label: "Task", type: "text", required: false, sample: "t-123" },
+      { target: "thread", label: "Thread", type: "text", required: false, sample: "deploys" }
+    ]
+  },
+  {
+    performative: "announce",
+    label: "Announce task",
+    hint: "Post a task others can claim (volunteer mode).",
+    fixedData: { mode: "volunteer" },
+    fields: [
+      { target: "task_ref", label: "Task id", type: "text", required: true, sample: "t-123" },
+      { target: "body", label: "Description", type: "text", required: true, sample: "Fix the login redirect loop" },
+      { target: "data.verdict_by", label: "Verdict by", type: "csv", required: false, sample: "alice@team" },
+      { target: "data.claim_window_s", label: "Claim window (s)", type: "number", required: false, sample: "300" },
+      { target: "data.lease_ttl_s", label: "Lease TTL (s)", type: "number", required: false, sample: "900" },
+      { target: "data.max_claim_s", label: "Max claim (s)", type: "number", required: false, sample: "3600" },
+      { target: "data.depends_on", label: "Depends on", type: "csv", required: false, sample: "t-100,t-101" }
+    ]
+  },
+  {
+    performative: "claim",
+    label: "Claim",
+    hint: "Take an announced task.",
+    fields: [
+      { target: "task_ref", label: "Task id", type: "text", required: true, sample: "t-123" },
+      { target: "body", label: "Note", type: "text", required: false, sample: "Taking this one." }
+    ]
+  },
+  {
+    performative: "release",
+    label: "Release",
+    hint: "Give a claimed task back to the room.",
+    fields: [
+      { target: "task_ref", label: "Task id", type: "text", required: true, sample: "t-123" },
+      { target: "body", label: "Note", type: "text", required: false, sample: "Out of my depth — releasing." }
+    ]
+  },
+  {
+    performative: "deliver",
+    label: "Deliver",
+    hint: "Hand in work for a task (needs at least one artifact ref).",
+    fields: [
+      { target: "task_ref", label: "Task id", type: "text", required: true, sample: "t-123" },
+      { target: "artifacts", label: "Artifacts", type: "csv", required: true, sample: "pr://org/repo/42" },
+      { target: "body", label: "Note", type: "text", required: false, sample: "PR up, tests green." }
+    ]
+  },
+  {
+    performative: "accept",
+    label: "Accept",
+    hint: "Accept a delivery (verdict).",
+    fields: [
+      { target: "task_ref", label: "Task id", type: "text", required: true, sample: "t-123" },
+      { target: "body", label: "Note", type: "text", required: false, sample: "Looks good — merged." }
+    ]
+  },
+  {
+    performative: "reject",
+    label: "Reject",
+    hint: "Reject a delivery (verdict, with reason).",
+    fields: [
+      { target: "task_ref", label: "Task id", type: "text", required: true, sample: "t-123" },
+      { target: "body", label: "Reason", type: "text", required: false, sample: "Breaks the mobile layout." }
+    ]
+  },
+  {
+    performative: "signal",
+    label: "Signal",
+    hint: "Broadcast your liveness condition.",
+    fields: [
+      { target: "data.condition", label: "Condition", type: "enum", options: CONDITIONS, required: true, sample: "working" },
+      { target: "body", label: "Note", type: "text", required: false, sample: "Deep in the merge conflict." }
+    ]
+  },
+  {
+    performative: "decide.request",
+    label: "Ask for decision",
+    hint: "Open a decision with a named authority.",
+    fields: [
+      { target: "thread", label: "Decision id", type: "text", required: true, sample: "d-1" },
+      { target: "data.question", label: "Question", type: "text", required: true, sample: "Ship option A or B?" },
+      { target: "data.authority", label: "Authority", type: "csv", required: true, sample: "id:alice@team,role:architect" },
+      { target: "data.deadline", label: "Deadline (ISO)", type: "text", required: false, sample: "2026-08-01T12:00:00Z" }
+    ]
+  },
+  {
+    performative: "decide.resolve",
+    label: "Resolve decision",
+    hint: "Answer an open decision you hold authority over.",
+    fields: [
+      { target: "thread", label: "Decision id", type: "text", required: true, sample: "d-1" },
+      { target: "data.resolution", label: "Resolution", type: "text", required: true, sample: "Option A" }
+    ]
+  },
+  {
+    performative: "escalate.ack",
+    label: "Ack escalation",
+    hint: "Mark a room escalation as handled.",
+    fields: [
+      { target: "data.escalate_seq", label: "Escalation seq", type: "number", required: true, sample: "42" }
+    ]
+  },
+  {
+    performative: "file.request",
+    label: "Request file access",
+    hint: "Post an advisory access request for a path.",
+    fields: [
+      { target: "data.path", label: "Path", type: "text", required: true, sample: "src/app.ts" },
+      { target: "data.grade", label: "Grade", type: "enum", options: GRADES, required: true, sample: "read" }
+    ]
+  }
+];
 // ../proto/src/machine.ts
 var MAX_DURATION_S = 30 * 24 * 60 * 60;
 // ../proto/src/decisions.ts
@@ -2386,7 +2515,16 @@ function writeSidecar(roomId, repopath, sidecar, home) {
   const p = sidecarPath(roomId, repopath, home);
   const dir = path2.dirname(p);
   fs.mkdirSync(dir, { recursive: true, mode: 448 });
-  fs.writeFileSync(p, JSON.stringify(sidecar), { encoding: "utf8", mode: 384 });
+  const tmpPath = path2.join(dir, `.${path2.basename(p)}.tmp-${process.pid}-${Date.now()}`);
+  try {
+    fs.writeFileSync(tmpPath, JSON.stringify(sidecar), { encoding: "utf8", mode: 384 });
+    fs.renameSync(tmpPath, p);
+  } catch (err2) {
+    try {
+      fs.rmSync(tmpPath, { force: true });
+    } catch {}
+    throw err2;
+  }
   try {
     fs.chmodSync(p, 384);
   } catch {}
@@ -2511,9 +2649,131 @@ function decideFoldBack(conflictBaseText, currentDocText, localText) {
   };
 }
 
+// ../engine/src/folder-lineage.ts
+import * as fs2 from "node:fs";
+import * as path3 from "node:path";
+var FOLDER_STATE_DIR = ".mesh";
+function assertNoTraversal(label, raw) {
+  let decoded;
+  try {
+    decoded = decodeURIComponent(raw);
+  } catch {
+    decoded = raw;
+  }
+  if (decoded === "." || decoded === ".." || decoded.split(/[/\\]/).some((seg) => seg === "..")) {
+    throw new Error(`folder-lineage: illegal ${label} "${raw}"`);
+  }
+}
+function atomicWriteJson(finalPath, value) {
+  const dir = path3.dirname(finalPath);
+  fs2.mkdirSync(dir, { recursive: true, mode: 448 });
+  const tmpPath = path3.join(dir, `.${path3.basename(finalPath)}.tmp-${process.pid}-${Date.now()}`);
+  try {
+    fs2.writeFileSync(tmpPath, JSON.stringify(value), { encoding: "utf8", mode: 384 });
+    fs2.renameSync(tmpPath, finalPath);
+  } catch (err2) {
+    try {
+      fs2.rmSync(tmpPath, { force: true });
+    } catch {}
+    throw err2;
+  }
+  try {
+    fs2.chmodSync(finalPath, 384);
+  } catch {}
+  try {
+    fs2.chmodSync(dir, 448);
+  } catch {}
+}
+function attachmentsPath(root) {
+  return path3.join(root, FOLDER_STATE_DIR, "attachments.json");
+}
+function readAttachments(root) {
+  const p = attachmentsPath(root);
+  if (!fs2.existsSync(p))
+    return { v: 1, attachments: [] };
+  try {
+    const raw = JSON.parse(fs2.readFileSync(p, "utf8"));
+    if (typeof raw !== "object" || raw === null || !("attachments" in raw) || !Array.isArray(raw.attachments)) {
+      return { v: 1, attachments: [] };
+    }
+    const attachments = raw.attachments.filter((a) => typeof a === "object" && a !== null && typeof a.origin === "string" && typeof a.roomId === "string");
+    return { v: 1, attachments };
+  } catch {
+    return { v: 1, attachments: [] };
+  }
+}
+function upsertAttachment(root, a) {
+  const current = readAttachments(root);
+  const idx = current.attachments.findIndex((x) => x.origin === a.origin && x.roomId === a.roomId);
+  const attachments = idx >= 0 ? current.attachments.map((x, i) => i === idx ? a : x) : [...current.attachments, a];
+  atomicWriteJson(attachmentsPath(root), { v: 1, attachments });
+}
+function findEnclosingAttachment(cwd, origin, roomId) {
+  let dir = path3.resolve(cwd);
+  for (;; ) {
+    const { attachments } = readAttachments(dir);
+    if (attachments.some((a) => a.origin === origin && a.roomId === roomId))
+      return dir;
+    const up = path3.dirname(dir);
+    if (up === dir)
+      return null;
+    dir = up;
+  }
+}
+function folderSidecarPath(root, roomKey, repopath) {
+  assertNoTraversal("roomKey", roomKey);
+  assertNoTraversal("repopath", repopath);
+  return path3.join(root, FOLDER_STATE_DIR, "lineage", roomKey, encodeURIComponent(repopath));
+}
+function readFolderSidecar(root, roomKey, repopath) {
+  const p = folderSidecarPath(root, roomKey, repopath);
+  if (!fs2.existsSync(p))
+    return;
+  try {
+    return JSON.parse(fs2.readFileSync(p, "utf8"));
+  } catch {
+    return;
+  }
+}
+function writeFolderSidecar(root, roomKey, repopath, s) {
+  atomicWriteJson(folderSidecarPath(root, roomKey, repopath), s);
+}
+function dropFolderSidecar(root, roomKey, repopath) {
+  try {
+    fs2.rmSync(folderSidecarPath(root, roomKey, repopath));
+  } catch {}
+}
+function listFolderSidecarPaths(root, roomKey) {
+  assertNoTraversal("roomKey", roomKey);
+  const dir = path3.join(root, FOLDER_STATE_DIR, "lineage", roomKey);
+  let entries;
+  try {
+    entries = fs2.readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const name of entries) {
+    if (name.startsWith("."))
+      continue;
+    try {
+      out.push(decodeURIComponent(name));
+    } catch {}
+  }
+  return out;
+}
+function readSidecarResolved(root, roomKey, roomId, repopath, home, legacyAmbiguous) {
+  const folder = readFolderSidecar(root, roomKey, repopath);
+  if (folder !== undefined)
+    return folder;
+  if (legacyAmbiguous)
+    return;
+  return readSidecar(roomId, repopath, home);
+}
+
 // ../engine/src/sync.ts
-import { writeFileSync as writeFileSync2, existsSync as existsSync2, mkdirSync as mkdirSync3, readFileSync as readFileSync2, unlinkSync } from "node:fs";
-import { resolve, dirname as dirname2, sep } from "node:path";
+import { writeFileSync as writeFileSync3, existsSync as existsSync3, mkdirSync as mkdirSync4, readFileSync as readFileSync3, unlinkSync } from "node:fs";
+import { resolve as resolve2, dirname as dirname3, sep } from "node:path";
 function classifySync(input) {
   if (input.tipGated)
     return "gated";
@@ -2604,19 +2864,19 @@ function buildStatusRow(input, now) {
 function composeStatusRows(input, now) {
   const allPaths = new Set([...input.local.keys(), ...input.tip.keys(), ...input.sidecarOnlyPaths]);
   const rows = [];
-  for (const path3 of [...allPaths].sort()) {
-    const local = input.local.get(path3);
-    const node = input.tip.get(path3);
+  for (const path4 of [...allPaths].sort()) {
+    const local = input.local.get(path4);
+    const node = input.tip.get(path4);
     const localText = local?.text;
     rows.push(buildStatusRow({
-      path: path3,
+      path: path4,
       localHash: local?.hash,
-      baseTipHash: input.baseTipHash.get(path3),
+      baseTipHash: input.baseTipHash.get(path4),
       tipHash: node?.content_hash,
       gated: node !== undefined && !node.content_hash,
-      lease: input.lease.get(path3),
+      lease: input.lease.get(path4),
       hasConflictMarkers: localText !== undefined && hasConflictMarkers(localText),
-      ignoredLocally: input.ignoredLocally?.has(path3) ?? false
+      ignoredLocally: input.ignoredLocally?.has(path4) ?? false
     }, now));
   }
   return rows;
@@ -2822,7 +3082,7 @@ async function forkWrite(client, origRepoPath, bytes, taken, maxAttempts = 3) {
   return { ok: false, error: "fork_race_exhausted", detail: `could not land a fork of ${origRepoPath} after ${maxAttempts} attempts (verify-and-bump)` };
 }
 function finishCodeConflict(ctx, conflictedText) {
-  writeFileSync2(ctx.localAbs, conflictedText, "utf8");
+  writeFileSync3(ctx.localAbs, conflictedText, "utf8");
   return { kind: "conflict-markers-local", stashHash: sha256hex(ctx.localBytes) };
 }
 async function proseMerge(ctx) {
@@ -3022,7 +3282,7 @@ async function runPutBatch(client, targets, opts) {
     leaseByPath.set(l.path, { holder: l.holder, expiresAtMs: l.lease_expires });
   const planned = targets.map((target) => {
     const key = normalizeId(target.repoPath);
-    const sidecar = readSidecar(opts.roomId, key, opts.home);
+    const sidecar = opts.root !== undefined && opts.roomKey !== undefined ? readSidecarResolved(opts.root, opts.roomKey, opts.roomId, key, opts.home) : readSidecar(opts.roomId, key, opts.home);
     const tip = tipByPath.get(key);
     const lease = leaseByPath.get(key);
     const lockedByOther = lease && lease.expiresAtMs > now && lease.holder !== opts.selfId ? lease : undefined;
@@ -3067,13 +3327,19 @@ async function runPutBatch(client, targets, opts) {
         tipSeq = healed.tipSeq;
       }
       if (outcome.kind === "merged")
-        writeFileSync2(target.localAbs, outcome.pushedBytes);
+        writeFileSync3(target.localAbs, outcome.pushedBytes);
+      const putSidecar = (s) => {
+        if (opts.root !== undefined && opts.roomKey !== undefined)
+          writeFolderSidecar(opts.root, opts.roomKey, key, s);
+        else
+          writeSidecar(opts.roomId, key, s, opts.home);
+      };
       if (outcome.kind === "added" || outcome.kind === "resurrected" || outcome.kind === "fast-forwarded") {
-        writeSidecar(opts.roomId, key, buildSidecar(target.localBytes, "r2:" + outcome.hash), opts.home);
+        putSidecar(buildSidecar(target.localBytes, "r2:" + outcome.hash));
       } else if (outcome.kind === "unchanged") {
-        writeSidecar(opts.roomId, key, buildSidecar(target.localBytes, localHash), opts.home);
+        putSidecar(buildSidecar(target.localBytes, localHash));
       } else if (outcome.kind === "merged") {
-        writeSidecar(opts.roomId, key, buildSidecar(outcome.pushedBytes, "r2:" + outcome.hash), opts.home);
+        putSidecar(buildSidecar(outcome.pushedBytes, "r2:" + outcome.hash));
       }
     } catch (e) {
       outcome = { kind: "error", error: "exception", detail: e instanceof Error ? e.message : String(e) };
@@ -3314,8 +3580,8 @@ async function fetchAndWriteTip(ctx, kind) {
   const blob = await ctx.client.getArtifact(hash);
   if (!(blob instanceof Uint8Array))
     return { kind: "error", error: blob.error, detail: blob.detail, hint: blob.hint };
-  mkdirSync3(dirname2(ctx.localAbs), { recursive: true });
-  writeFileSync2(ctx.localAbs, blob);
+  mkdirSync4(dirname3(ctx.localAbs), { recursive: true });
+  writeFileSync3(ctx.localAbs, blob);
   return { kind, bytes: blob, tipHash: tipRef };
 }
 async function forkTheirsLocally(ctx, reason) {
@@ -3331,10 +3597,10 @@ async function forkTheirsLocally(ctx, reason) {
   const blob = await ctx.client.getArtifact(hash);
   if (!(blob instanceof Uint8Array))
     return { kind: "error", error: blob.error, detail: blob.detail, hint: blob.hint };
-  const forkPath = nextLocalForkPath(ctx.repoPath, (candidate) => existsSync2(resolve(ctx.into, candidate)));
-  const forkAbs = resolve(ctx.into, forkPath);
-  mkdirSync3(dirname2(forkAbs), { recursive: true });
-  writeFileSync2(forkAbs, blob);
+  const forkPath = nextLocalForkPath(ctx.repoPath, (candidate) => existsSync3(resolve2(ctx.into, candidate)));
+  const forkAbs = resolve2(ctx.into, forkPath);
+  mkdirSync4(dirname3(forkAbs), { recursive: true });
+  writeFileSync3(forkAbs, blob);
   return reason === "never-synced" ? { kind: "forked-theirs", forkPath, hash: sha256hex(blob) } : { kind: "forked-conflict", forkPath, hash: sha256hex(blob) };
 }
 async function fetchMergeTexts(ctx) {
@@ -3371,11 +3637,11 @@ async function applyGetMergeAttempt(ctx, lane) {
         if (typeof tipRef !== "string")
           return { kind: "error", ...tipRef };
         const mergedBytes = new Uint8Array(Buffer.from(merge.merged, "utf8"));
-        writeFileSync2(ctx.localAbs, mergedBytes);
+        writeFileSync3(ctx.localAbs, mergedBytes);
         return { kind: "merged-local", bytes: mergedBytes, tipHash: tipRef };
       }
       if (lane === "code") {
-        writeFileSync2(ctx.localAbs, merge.conflicted, "utf8");
+        writeFileSync3(ctx.localAbs, merge.conflicted, "utf8");
         return { kind: "conflict-markers-local" };
       }
       return forkTheirsLocally(ctx, "conflict");
@@ -3511,23 +3777,23 @@ async function runGetBatch(client, opts) {
     for (const p of tipByPath.keys())
       allPaths.add(p);
   const sortedPaths = [...allPaths].sort();
-  const base = resolve(opts.into);
+  const base = resolve2(opts.into);
   const planned = [];
   const escapes = [];
   for (const repoPath of sortedPaths) {
-    const abs = resolve(opts.into, repoPath);
+    const abs = resolve2(opts.into, repoPath);
     if (abs !== base && !abs.startsWith(base + sep)) {
       escapes.push({ repoPath, state: "vacuous", localAbs: abs, outcome: { kind: "path-escape" } });
       continue;
     }
     let localBytes;
     try {
-      localBytes = new Uint8Array(readFileSync2(abs));
+      localBytes = new Uint8Array(readFileSync3(abs));
     } catch {
       localBytes = undefined;
     }
     const key = normalizeId(repoPath);
-    const sidecar = readSidecar(opts.roomId, key, opts.home);
+    const sidecar = opts.roomKey !== undefined ? readSidecarResolved(opts.into, opts.roomKey, opts.roomId, key, opts.home) : readSidecar(opts.roomId, key, opts.home);
     const tip = tipByPath.get(repoPath);
     const gated = tip !== undefined && !tip.contentHash;
     const planInput = {
@@ -3556,12 +3822,23 @@ async function runGetBatch(client, opts) {
     opts.onProgress?.({ kind: "start", n, total, path: repoPath });
     const key = normalizeId(repoPath);
     const outcome = await applyGetTarget(ctx, action);
+    const putSidecar = (s) => {
+      if (opts.roomKey !== undefined)
+        writeFolderSidecar(opts.into, opts.roomKey, key, s);
+      else
+        writeSidecar(opts.roomId, key, s, opts.home);
+    };
+    const drop = () => {
+      if (opts.roomKey !== undefined)
+        dropFolderSidecar(opts.into, opts.roomKey, key);
+      dropSidecar(opts.roomId, key, opts.home);
+    };
     if (outcome.kind === "downloaded" || outcome.kind === "rehydrated" || outcome.kind === "updated" || outcome.kind === "adopted" || outcome.kind === "converged" || outcome.kind === "merged-local") {
-      writeSidecar(opts.roomId, key, buildSidecar(outcome.bytes, outcome.tipHash), opts.home);
+      putSidecar(buildSidecar(outcome.bytes, outcome.tipHash));
     } else if (outcome.kind === "dropped-sidecar") {
-      dropSidecar(opts.roomId, key, opts.home);
+      drop();
     } else if (outcome.kind === "deleted-clean" && outcome.pruned) {
-      dropSidecar(opts.roomId, key, opts.home);
+      drop();
     }
     rows.push({ repoPath, state, outcome, localAbs: abs });
     opts.onProgress?.({ kind: "get-file", n, total, path: repoPath, outcome });
@@ -3618,11 +3895,11 @@ function formatGetRowMessage(repoPath, outcome) {
   }
 }
 // ../engine/src/ignore.ts
-import { readFileSync as readFileSync3, readdirSync as readdirSync2 } from "node:fs";
-import { join as join3 } from "node:path";
+import { readFileSync as readFileSync4, readdirSync as readdirSync3 } from "node:fs";
+import { join as join4 } from "node:path";
 function loadMeshignore(root) {
   try {
-    return readFileSync3(join3(root, ".meshignore"), "utf8").split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0 && !l.startsWith("#"));
+    return readFileSync4(join4(root, ".meshignore"), "utf8").split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0 && !l.startsWith("#"));
   } catch {
     return [];
   }
@@ -3678,12 +3955,12 @@ function meshignoreToTarExcludes(patterns) {
 function walkDirFiles(root, isIgnored) {
   const out = [];
   const rec = (dir, rel) => {
-    for (const ent of readdirSync2(dir, { withFileTypes: true })) {
+    for (const ent of readdirSync3(dir, { withFileTypes: true })) {
       const childRel = rel ? `${rel}/${ent.name}` : ent.name;
       if (isIgnored(childRel))
         continue;
       if (ent.isDirectory())
-        rec(join3(dir, ent.name), childRel);
+        rec(join4(dir, ent.name), childRel);
       else if (ent.isFile())
         out.push(childRel);
     }
@@ -3711,29 +3988,29 @@ class WorkspaceCache {
     this._idleTtlMs = opts?.idleTtlMs ?? DEFAULT_IDLE_TTL_MS;
     this._mirror = opts?.mirror;
   }
-  async read(path3) {
+  async read(path4) {
     let treeHash;
     if (this._mirror !== undefined) {
-      const node = this._mirror.get(path3);
+      const node = this._mirror.get(path4);
       if (node === undefined) {
-        throw new Error(`WorkspaceCache.read: path "${path3}" not found in room tree`);
+        throw new Error(`WorkspaceCache.read: path "${path4}" not found in room tree`);
       }
       treeHash = node.content_hash;
     } else {
-      const treeResult = await this._client.getTree(path3);
+      const treeResult = await this._client.getTree(path4);
       if (!("tree" in treeResult)) {
-        throw new Error(`WorkspaceCache.read: getTree failed for path "${path3}": ${treeResult.error}`);
+        throw new Error(`WorkspaceCache.read: getTree failed for path "${path4}": ${treeResult.error}`);
       }
-      const node = resolveNode(treeResult.tree, path3);
+      const node = resolveNode(treeResult.tree, path4);
       if (node === undefined) {
-        throw new Error(`WorkspaceCache.read: path "${path3}" not found in room tree`);
+        throw new Error(`WorkspaceCache.read: path "${path4}" not found in room tree`);
       }
       treeHash = node.content_hash;
     }
     if (treeHash === undefined) {
-      throw new Error(`WorkspaceCache.read: path "${path3}" is content-gated (no read grant) — cannot hydrate`);
+      throw new Error(`WorkspaceCache.read: path "${path4}" is content-gated (no read grant) — cannot hydrate`);
     }
-    const existing = this._entries.get(path3);
+    const existing = this._entries.get(path4);
     if (isCacheFresh(existing?.hash, treeHash)) {
       existing.atime = Date.now();
       return existing.bytes;
@@ -3741,36 +4018,36 @@ class WorkspaceCache {
     const rawHash = hashFromRef(treeHash);
     const blobResult = await this._client.getArtifact(rawHash);
     if (!(blobResult instanceof Uint8Array)) {
-      throw new Error(`WorkspaceCache.read: getArtifact failed for "${path3}" (hash ${rawHash}): ${blobResult.error}`);
+      throw new Error(`WorkspaceCache.read: getArtifact failed for "${path4}" (hash ${rawHash}): ${blobResult.error}`);
     }
     if (existing !== undefined) {
       this._totalBytes -= existing.bytes.byteLength;
-      this._entries.delete(path3);
+      this._entries.delete(path4);
     }
     const entry = { hash: treeHash, bytes: blobResult, atime: Date.now() };
-    this._entries.set(path3, entry);
+    this._entries.set(path4, entry);
     this._totalBytes += blobResult.byteLength;
     this._evict();
     return blobResult;
   }
-  isWarm(path3, hash) {
-    return this._entries.get(path3)?.hash === hash;
+  isWarm(path4, hash) {
+    return this._entries.get(path4)?.hash === hash;
   }
-  async warm(path3, hash) {
-    if (this.isWarm(path3, hash))
+  async warm(path4, hash) {
+    if (this.isWarm(path4, hash))
       return;
     const rawHash = hashFromRef(hash);
     const blobResult = await this._client.getArtifact(rawHash);
     if (!(blobResult instanceof Uint8Array)) {
-      throw new Error(`WorkspaceCache.warm: getArtifact failed for "${path3}" (hash ${rawHash}): ${blobResult.error}`);
+      throw new Error(`WorkspaceCache.warm: getArtifact failed for "${path4}" (hash ${rawHash}): ${blobResult.error}`);
     }
-    const existing = this._entries.get(path3);
+    const existing = this._entries.get(path4);
     if (existing !== undefined) {
       this._totalBytes -= existing.bytes.byteLength;
-      this._entries.delete(path3);
+      this._entries.delete(path4);
     }
     const entry = { hash, bytes: blobResult, atime: Date.now() };
-    this._entries.set(path3, entry);
+    this._entries.set(path4, entry);
     this._totalBytes += blobResult.byteLength;
     this._evict();
   }
@@ -3795,10 +4072,10 @@ class WorkspaceCache {
   }
   _evict() {
     const now = Date.now();
-    for (const [path3, entry] of this._entries) {
+    for (const [path4, entry] of this._entries) {
       if (now - entry.atime > this._idleTtlMs) {
         this._totalBytes -= entry.bytes.byteLength;
-        this._entries.delete(path3);
+        this._entries.delete(path4);
       }
     }
     while (this._totalBytes > this._maxBytes && this._entries.size > 0) {
@@ -3868,22 +4145,212 @@ class TreeMirror {
     this._headSeq = entry.seq;
     return true;
   }
-  get(path3) {
-    return this._nodes.get(normalizeId(path3));
+  get(path4) {
+    return this._nodes.get(normalizeId(path4));
   }
   getAllPaths() {
     return [...this._nodes.keys()];
   }
 }
+// ../engine/src/machine-registry.ts
+import * as fs3 from "node:fs";
+import * as path4 from "node:path";
+import * as os2 from "node:os";
+import { createHash as createHash2 } from "node:crypto";
+function machineDir() {
+  return process.env["MESH_MACHINE_DIR"] ?? path4.join(os2.homedir(), ".mesh", "machine");
+}
+function roomKeyFor(origin, roomId) {
+  return encodeURIComponent(origin) + "#" + encodeURIComponent(roomId);
+}
+function parseRoomKey(roomKey) {
+  const sep2 = roomKey.indexOf("#");
+  if (sep2 < 0)
+    return null;
+  try {
+    return { origin: decodeURIComponent(roomKey.slice(0, sep2)), roomId: decodeURIComponent(roomKey.slice(sep2 + 1)) };
+  } catch {
+    return null;
+  }
+}
+function roomIdFromRoomKey(roomKey) {
+  return parseRoomKey(roomKey)?.roomId ?? roomKey;
+}
+function normalizeOrigin(url) {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return url;
+  }
+}
+function membershipId(home, origin, roomId) {
+  return createHash2("sha256").update(`${home}|${origin}|${roomId}`).digest("hex").slice(0, 16);
+}
+function registryPath(dir) {
+  return path4.join(dir ?? machineDir(), "registry.json");
+}
+function loadMachineRegistry(dir) {
+  const p = registryPath(dir);
+  if (!fs3.existsSync(p))
+    return { v: 1, homes: [], daemons: {} };
+  try {
+    const raw = JSON.parse(fs3.readFileSync(p, "utf8"));
+    return {
+      v: 1,
+      homes: Array.isArray(raw.homes) ? raw.homes : [],
+      daemons: raw.daemons && typeof raw.daemons === "object" ? raw.daemons : {}
+    };
+  } catch {
+    return { v: 1, homes: [], daemons: {} };
+  }
+}
+function writeRegistry(dir, registry) {
+  const targetDir = dir ?? machineDir();
+  fs3.mkdirSync(targetDir, { recursive: true, mode: 448 });
+  const finalPath = registryPath(dir);
+  const tmpPath = path4.join(targetDir, `.registry.json.tmp-${process.pid}-${Date.now()}`);
+  try {
+    fs3.writeFileSync(tmpPath, JSON.stringify(registry, null, 2) + `
+`, { encoding: "utf8", mode: 384 });
+    fs3.renameSync(tmpPath, finalPath);
+  } catch (err2) {
+    try {
+      fs3.rmSync(tmpPath, { force: true });
+    } catch {}
+    throw err2;
+  }
+  try {
+    fs3.chmodSync(finalPath, 384);
+  } catch {}
+  try {
+    fs3.chmodSync(targetDir, 448);
+  } catch {}
+}
+function registerHome(home, dir) {
+  const resolved = path4.resolve(home);
+  const registry = loadMachineRegistry(dir);
+  if (registry.homes.includes(resolved))
+    return;
+  writeRegistry(dir, { ...registry, homes: [...registry.homes, resolved].sort() });
+}
+function daemonKey(home, roomKey) {
+  return `${home}#${roomKey}`;
+}
+function readIdentityLabel(home) {
+  try {
+    const raw = JSON.parse(fs3.readFileSync(path4.join(home, "identity.json"), "utf8"));
+    if (typeof raw.id !== "string" || typeof raw.pubkey !== "string")
+      return;
+    return { identityId: raw.id, pubkey: raw.pubkey };
+  } catch {
+    return;
+  }
+}
+function parseRoomsFile(raw) {
+  if (typeof raw === "object" && raw !== null && raw.v === 2) {
+    const rawMemberships = raw.memberships;
+    const memberships2 = {};
+    if (typeof rawMemberships === "object" && rawMemberships !== null) {
+      for (const [roomKey, entry] of Object.entries(rawMemberships)) {
+        if (parseRoomKey(roomKey) === null)
+          continue;
+        memberships2[roomKey] = entry;
+      }
+    }
+    return { file: { v: 2, memberships: memberships2 }, wasV1: false };
+  }
+  const memberships = {};
+  if (typeof raw === "object" && raw !== null) {
+    for (const [roomId, entry] of Object.entries(raw)) {
+      if (typeof entry !== "object" || entry === null || typeof entry.url !== "string")
+        continue;
+      const e = entry;
+      memberships[roomKeyFor(normalizeOrigin(e.url), roomId)] = e;
+    }
+  }
+  return { file: { v: 2, memberships }, wasV1: true };
+}
+function readRoomsAnyVersion(home) {
+  let raw;
+  try {
+    raw = JSON.parse(fs3.readFileSync(path4.join(home, "rooms.json"), "utf8"));
+  } catch {
+    return [];
+  }
+  const { file } = parseRoomsFile(raw);
+  const out = [];
+  for (const [roomKey, entry] of Object.entries(file.memberships)) {
+    const parsed = parseRoomKey(roomKey);
+    if (parsed === null)
+      continue;
+    out.push({ ...entry, roomKey, origin: parsed.origin, roomId: parsed.roomId });
+  }
+  return out;
+}
+function isActiveRoom(home, m) {
+  try {
+    const raw = fs3.readFileSync(path4.join(home, "active_room"), "utf8").trim();
+    return raw === m.roomKey || raw === m.roomId;
+  } catch {
+    return false;
+  }
+}
+function scanMachineInventory(dir) {
+  const registry = loadMachineRegistry(dir);
+  const defaultHome = process.env["MESH_HOME_ROOT"] ?? path4.join(os2.homedir(), ".mesh");
+  const homes = new Set(registry.homes);
+  homes.add(defaultHome);
+  if (process.env["MESH_HOME_ROOT"] === undefined) {
+    const siblingRoot = path4.dirname(defaultHome);
+    let siblings;
+    try {
+      siblings = fs3.readdirSync(siblingRoot);
+    } catch {
+      siblings = [];
+    }
+    for (const name of siblings) {
+      if (name === ".mesh" || name.startsWith(".mesh-"))
+        homes.add(path4.join(siblingRoot, name));
+    }
+  }
+  let profileNames;
+  try {
+    profileNames = fs3.readdirSync(path4.join(defaultHome, "profiles"), { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
+  } catch {
+    profileNames = [];
+  }
+  for (const name of profileNames)
+    homes.add(path4.join(defaultHome, "profiles", name));
+  const out = [];
+  for (const home of [...homes].sort()) {
+    const identity = readIdentityLabel(home);
+    if (!identity)
+      continue;
+    const label = home === defaultHome ? "default" : path4.basename(home);
+    const memberships = readRoomsAnyVersion(home).map((m) => ({ ...m, active: isActiveRoom(home, m) }));
+    out.push({ home, label, identityId: identity.identityId, pubkey: identity.pubkey, memberships });
+  }
+  return out;
+}
+// ../engine/src/status-root.ts
+import { resolve as resolve4 } from "node:path";
+function resolveStatusRoot(rootFlag, cwd, membership) {
+  if (rootFlag !== undefined)
+    return { root: resolve4(rootFlag), source: "flag" };
+  const enclosing = findEnclosingAttachment(cwd, membership.origin, membership.roomId);
+  if (enclosing !== null)
+    return { root: enclosing, source: "enclosing-attachment" };
+  return null;
+}
 // src/config.ts
-var PROFILES_ROOT = () => process.env["MESH_HOME_ROOT"] ?? path3.join(os2.homedir(), ".mesh");
+var PROFILES_ROOT = () => process.env["MESH_HOME_ROOT"] ?? path5.join(os3.homedir(), ".mesh");
 function readCwdProfile(cwd) {
   let dir = cwd;
   for (;; ) {
-    const f = path3.join(dir, ".mesh-profile");
-    if (fs3.existsSync(f))
-      return fs3.readFileSync(f, "utf8").trim() || null;
-    const up = path3.dirname(dir);
+    const f = path5.join(dir, ".mesh-profile");
+    if (fs5.existsSync(f))
+      return fs5.readFileSync(f, "utf8").trim() || null;
+    const up = path5.dirname(dir);
     if (up === dir)
       return null;
     dir = up;
@@ -3893,21 +4360,21 @@ function resolveProfileHome(profileFlag, cwd = process.cwd()) {
   if (process.env["MESH_HOME"])
     return process.env["MESH_HOME"];
   const name = profileFlag ?? readCwdProfile(cwd) ?? getActiveProfile();
-  return name ? path3.join(PROFILES_ROOT(), "profiles", name) : path3.join(os2.homedir(), ".mesh");
+  return name ? path5.join(PROFILES_ROOT(), "profiles", name) : path5.join(os3.homedir(), ".mesh");
 }
 function loadConfig(home) {
-  const f = path3.join(home ?? meshHome(), "config.json");
-  if (!fs3.existsSync(f))
+  const f = path5.join(home ?? meshHome(), "config.json");
+  if (!fs5.existsSync(f))
     return {};
-  const raw = JSON.parse(fs3.readFileSync(f, "utf8"));
+  const raw = JSON.parse(fs5.readFileSync(f, "utf8"));
   if (typeof raw !== "object" || raw === null)
     return {};
   return raw;
 }
 function saveConfig(cfg, home) {
   const dir = home ?? meshHome();
-  fs3.mkdirSync(dir, { recursive: true });
-  fs3.writeFileSync(path3.join(dir, "config.json"), JSON.stringify(cfg, null, 2));
+  fs5.mkdirSync(dir, { recursive: true });
+  fs5.writeFileSync(path5.join(dir, "config.json"), JSON.stringify(cfg, null, 2));
 }
 var DEFAULT_ROOM_URL = "https://usemesh.dev";
 function resolveRoomUrl(explicit, home) {
@@ -3915,47 +4382,47 @@ function resolveRoomUrl(explicit, home) {
 }
 function setActiveProfile(name) {
   const root = PROFILES_ROOT();
-  fs3.mkdirSync(root, { recursive: true });
-  fs3.writeFileSync(path3.join(root, "active_profile"), name + `
+  fs5.mkdirSync(root, { recursive: true });
+  fs5.writeFileSync(path5.join(root, "active_profile"), name + `
 `);
 }
 function getActiveProfile() {
-  const p = path3.join(PROFILES_ROOT(), "active_profile");
-  if (!fs3.existsSync(p))
+  const p = path5.join(PROFILES_ROOT(), "active_profile");
+  if (!fs5.existsSync(p))
     return null;
   try {
-    return fs3.readFileSync(p, "utf8").trim() || null;
+    return fs5.readFileSync(p, "utf8").trim() || null;
   } catch {
     return null;
   }
 }
 function listProfiles() {
-  const dir = path3.join(PROFILES_ROOT(), "profiles");
-  if (!fs3.existsSync(dir))
+  const dir = path5.join(PROFILES_ROOT(), "profiles");
+  if (!fs5.existsSync(dir))
     return [];
-  return fs3.readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
+  return fs5.readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
 }
 function loadIdentity(home) {
-  const p = path3.join(home ?? meshHome(), "identity.json");
-  if (!fs3.existsSync(p))
+  const p = path5.join(home ?? meshHome(), "identity.json");
+  if (!fs5.existsSync(p))
     return null;
   try {
-    fs3.chmodSync(p, 384);
+    fs5.chmodSync(p, 384);
   } catch {}
-  return JSON.parse(fs3.readFileSync(p, "utf8"));
+  return JSON.parse(fs5.readFileSync(p, "utf8"));
 }
 function saveIdentity(identity, home) {
   const dir = home ?? meshHome();
-  fs3.mkdirSync(dir, { recursive: true, mode: 448 });
-  const finalPath = path3.join(dir, "identity.json");
-  const tmpPath = path3.join(dir, `.identity.json.tmp-${process.pid}-${Date.now()}`);
+  fs5.mkdirSync(dir, { recursive: true, mode: 448 });
+  const finalPath = path5.join(dir, "identity.json");
+  const tmpPath = path5.join(dir, `.identity.json.tmp-${process.pid}-${Date.now()}`);
   try {
-    fs3.writeFileSync(tmpPath, JSON.stringify(identity, null, 2) + `
+    fs5.writeFileSync(tmpPath, JSON.stringify(identity, null, 2) + `
 `, { encoding: "utf8", mode: 384 });
-    fs3.renameSync(tmpPath, finalPath);
+    fs5.renameSync(tmpPath, finalPath);
   } catch (err2) {
     try {
-      fs3.rmSync(tmpPath, { force: true });
+      fs5.rmSync(tmpPath, { force: true });
     } catch {}
     throw err2;
   }
@@ -3964,7 +4431,7 @@ function persistOrExplain(identity, home, persist = saveIdentity) {
   try {
     persist(identity, home);
   } catch (err2) {
-    const identityPath = path3.join(home ?? meshHome(), "identity.json");
+    const identityPath = path5.join(home ?? meshHome(), "identity.json");
     process.stderr.write(`
 mesh: FAILED to save the new identity after the room already accepted the rotation.
 ` + `The old key is now dead in this room — write the JSON below to ${identityPath} manually to recover:
@@ -4040,10 +4507,10 @@ function ensureNextKey(identity, home) {
   saveIdentity(upgraded, home);
   return upgraded;
 }
-function listIdentityHomes(root = os2.homedir()) {
+function listIdentityHomes(root = os3.homedir()) {
   let names;
   try {
-    names = fs3.readdirSync(root);
+    names = fs5.readdirSync(root);
   } catch {
     return [];
   }
@@ -4051,88 +4518,153 @@ function listIdentityHomes(root = os2.homedir()) {
   for (const name of names) {
     if (name !== ".mesh" && !name.startsWith(".mesh-"))
       continue;
-    const home = path3.join(root, name);
+    const home = path5.join(root, name);
     const identity = loadIdentity(home);
     if (identity)
       out.push({ home, identity });
   }
   return out.sort((a, b) => a.home.localeCompare(b.home));
 }
+function roomsPath(home) {
+  return path5.join(home ?? meshHome(), "rooms.json");
+}
 function loadRooms(home) {
-  const p = path3.join(home ?? meshHome(), "rooms.json");
-  if (!fs3.existsSync(p))
-    return {};
+  const p = roomsPath(home);
+  if (!fs5.existsSync(p))
+    return { v: 2, memberships: {} };
   try {
-    fs3.chmodSync(p, 384);
+    fs5.chmodSync(p, 384);
   } catch {}
-  return JSON.parse(fs3.readFileSync(p, "utf8"));
+  const raw = JSON.parse(fs5.readFileSync(p, "utf8"));
+  const { file, wasV1 } = parseRoomsFile(raw);
+  if (!wasV1)
+    return file;
+  saveRooms(file, home);
+  const activeRaw = readActiveRoomRaw(home);
+  if (activeRaw !== null) {
+    const migratedKey = Object.keys(file.memberships).find((roomKey) => parseRoomKey(roomKey)?.roomId === activeRaw);
+    if (migratedKey !== undefined)
+      setActiveRoom(migratedKey, home);
+  }
+  return file;
 }
 function saveRooms(rooms, home) {
   const dir = home ?? meshHome();
-  fs3.mkdirSync(dir, { recursive: true, mode: 448 });
-  fs3.writeFileSync(path3.join(dir, "rooms.json"), JSON.stringify(rooms, null, 2) + `
+  fs5.mkdirSync(dir, { recursive: true, mode: 448 });
+  const finalPath = roomsPath(home);
+  const tmpPath = path5.join(dir, `.rooms.json.tmp-${process.pid}-${Date.now()}`);
+  try {
+    fs5.writeFileSync(tmpPath, JSON.stringify(rooms, null, 2) + `
 `, { encoding: "utf8", mode: 384 });
+    fs5.renameSync(tmpPath, finalPath);
+  } catch (err2) {
+    try {
+      fs5.rmSync(tmpPath, { force: true });
+    } catch {}
+    throw err2;
+  }
 }
 function upsertRoom(roomId, entry, home) {
   const rooms = loadRooms(home);
-  rooms[roomId] = entry;
-  saveRooms(rooms, home);
+  const roomKey = roomKeyFor(normalizeOrigin(entry.url), roomId);
+  saveRooms({ v: 2, memberships: { ...rooms.memberships, [roomKey]: entry } }, home);
 }
-function removeRoom(roomId, home) {
+function findRoomKeysById(rooms, roomId) {
+  const out = [];
+  for (const roomKey of Object.keys(rooms.memberships)) {
+    const parsed = parseRoomKey(roomKey);
+    if (parsed !== null && parsed.roomId === roomId)
+      out.push({ roomKey, origin: parsed.origin });
+  }
+  return out;
+}
+function ambiguousRoomIdError(roomId, matches, home) {
+  const origins = matches.map((m) => m.origin).join(", ");
+  return new Error(`Room "${roomId}" is joined on more than one origin (${origins}) in ${roomsPath(home)}. ` + `Disambiguate with --url <origin>, e.g. --room ${roomId} --url ${matches[0].origin}.`);
+}
+function resolveRoomKeyById(rooms, roomId, urlFlag, home) {
+  let matches = findRoomKeysById(rooms, roomId);
+  if (urlFlag !== undefined) {
+    const originFlag = normalizeOrigin(urlFlag);
+    matches = matches.filter((m) => m.origin === originFlag);
+  }
+  if (matches.length === 0)
+    throw new Error(`Room "${roomId}" not in ${roomsPath(home)}. Run "mesh room join" first.`);
+  if (matches.length > 1)
+    throw ambiguousRoomIdError(roomId, matches, home);
+  return matches[0].roomKey;
+}
+function removeRoom(roomId, home, urlFlag) {
   const rooms = loadRooms(home);
-  if (!(roomId in rooms))
+  if (findRoomKeysById(rooms, roomId).length === 0)
     return false;
-  delete rooms[roomId];
-  saveRooms(rooms, home);
-  if (getActiveRoom(home) === roomId)
+  const roomKey = resolveRoomKeyById(rooms, roomId, urlFlag, home);
+  const memberships = { ...rooms.memberships };
+  delete memberships[roomKey];
+  saveRooms({ v: 2, memberships }, home);
+  if (readActiveRoomRaw(home) === roomKey)
     setActiveRoom(null, home);
   return true;
 }
-function activeRoomPath(home) {
-  return path3.join(home ?? meshHome(), "active_room");
+function isRoomIdAmbiguous(roomId, home) {
+  return findRoomKeysById(loadRooms(home), roomId).length > 1;
 }
-function getActiveRoom(home) {
+function activeRoomPath(home) {
+  return path5.join(home ?? meshHome(), "active_room");
+}
+function readActiveRoomRaw(home) {
   const p = activeRoomPath(home);
-  if (!fs3.existsSync(p))
+  if (!fs5.existsSync(p))
     return null;
   try {
-    return fs3.readFileSync(p, "utf8").trim() || null;
+    return fs5.readFileSync(p, "utf8").trim() || null;
   } catch {
     return null;
   }
 }
-function setActiveRoom(roomId, home) {
+function getActiveRoom(home) {
+  const raw = readActiveRoomRaw(home);
+  return raw === null ? null : roomIdFromRoomKey(raw);
+}
+function setActiveRoom(roomKey, home) {
   const p = activeRoomPath(home);
-  if (roomId === null) {
+  if (roomKey === null) {
     try {
-      fs3.rmSync(p, { force: true });
+      fs5.rmSync(p, { force: true });
     } catch {}
     return;
   }
   const dir = home ?? meshHome();
-  fs3.mkdirSync(dir, { recursive: true, mode: 448 });
-  fs3.writeFileSync(p, roomId + `
+  fs5.mkdirSync(dir, { recursive: true, mode: 448 });
+  fs5.writeFileSync(p, roomKey + `
 `, { encoding: "utf8", mode: 384 });
 }
-function resolveRoom(roomIdOpt, home) {
+function resolveRoom(roomIdOpt, home, urlFlag) {
   const rooms = loadRooms(home);
   if (roomIdOpt) {
-    const entry = rooms[roomIdOpt];
-    if (!entry) {
-      throw new Error(`Room "${roomIdOpt}" not in ${path3.join(home ?? meshHome(), "rooms.json")}. Run "mesh room join" first.`);
-    }
-    setActiveRoom(roomIdOpt, home);
-    return { roomId: roomIdOpt, entry };
+    const roomKey = resolveRoomKeyById(rooms, roomIdOpt, urlFlag, home);
+    setActiveRoom(roomKey, home);
+    return { roomId: roomIdOpt, roomKey, entry: rooms.memberships[roomKey] };
   }
-  const ids = Object.keys(rooms);
-  if (ids.length === 0)
+  const roomKeys = Object.keys(rooms.memberships);
+  if (roomKeys.length === 0)
     throw new Error('No rooms joined. Run "mesh room join" first.');
-  if (ids.length === 1)
-    return { roomId: ids[0], entry: rooms[ids[0]] };
-  const active = getActiveRoom(home);
-  if (active && rooms[active])
-    return { roomId: active, entry: rooms[active] };
-  throw new Error(`Multiple rooms: ${ids.join(", ")}. Use --room <room_id> (it'll be remembered next time).`);
+  if (roomKeys.length === 1) {
+    const roomKey = roomKeys[0];
+    return { roomId: roomIdFromRoomKey(roomKey), roomKey, entry: rooms.memberships[roomKey] };
+  }
+  const activeKey = readActiveRoomRaw(home);
+  if (activeKey !== null && rooms.memberships[activeKey]) {
+    return { roomId: roomIdFromRoomKey(activeKey), roomKey: activeKey, entry: rooms.memberships[activeKey] };
+  }
+  throw new Error(`Multiple rooms: ${roomKeys.map(roomIdFromRoomKey).join(", ")}. Use --room <room_id> (it'll be remembered next time).`);
+}
+function setDefaultWorkspaceRoot(roomKey, root, home) {
+  const rooms = loadRooms(home);
+  const entry = rooms.memberships[roomKey];
+  if (!entry || entry.workspace_root !== undefined)
+    return;
+  saveRooms({ v: 2, memberships: { ...rooms.memberships, [roomKey]: { ...entry, workspace_root: root } } }, home);
 }
 
 // src/prompt.ts
@@ -4488,8 +5020,8 @@ function renderWorkspace(opts) {
   return lines.join(`
 `);
 }
-function sectionHeader(path4, tip_seq, author) {
-  const safePath = scrubControl(path4);
+function sectionHeader(path6, tip_seq, author) {
+  const safePath = scrubControl(path6);
   const parts = [
     tip_seq !== null ? `seq ${tip_seq}` : null,
     author !== null ? `by ${scrubControl(author)}` : null
@@ -5004,17 +5536,17 @@ var DIM2 = "\x1B[2m";
 var RESET2 = "\x1B[0m";
 
 // src/main.ts
-import { readFileSync as readFileSync8, statSync as statSync2, existsSync as existsSync4 } from "node:fs";
-import * as os3 from "node:os";
-import { resolve as resolve4, join as join7, sep as sep3 } from "node:path";
+import { readFileSync as readFileSync13, statSync as statSync4, existsSync as existsSync8 } from "node:fs";
+import * as os5 from "node:os";
+import { resolve as resolve8, join as join12, sep as sep3, relative, isAbsolute as isAbsolute3 } from "node:path";
 
 // src/deps.ts
-import { dirname as dirname4, join as join5, normalize } from "node:path";
+import { dirname as dirname6, join as join7, normalize } from "node:path";
 var IMPORT_RE = /(?:import|export)[^"']*?from\s*["']([^"']+)["']|import\s*["']([^"']+)["']|require\(\s*["']([^"']+)["']\s*\)/g;
 function resolveRel(fromFile, spec) {
   if (!spec.startsWith("."))
     return null;
-  const p = normalize(join5(dirname4(fromFile), spec));
+  const p = normalize(join7(dirname6(fromFile), spec));
   return p.endsWith(".ts") || p.endsWith(".js") ? p : p + ".ts";
 }
 var tsResolver = {
@@ -5765,14 +6297,14 @@ var deepFreeze = (o) => {
 };
 
 // ../../node_modules/lib0/function.js
-var callAll = (fs4, args, i = 0) => {
+var callAll = (fs6, args, i = 0) => {
   try {
-    for (;i < fs4.length; i++) {
-      fs4[i](...args);
+    for (;i < fs6.length; i++) {
+      fs6[i](...args);
     }
   } finally {
-    if (i < fs4.length) {
-      callAll(fs4, args, i + 1);
+    if (i < fs6.length) {
+      callAll(fs6, args, i + 1);
     }
   }
 };
@@ -6162,17 +6694,17 @@ class Doc extends ObservableV2 {
     this.isLoaded = false;
     this.isSynced = false;
     this.isDestroyed = false;
-    this.whenLoaded = create4((resolve2) => {
+    this.whenLoaded = create4((resolve5) => {
       this.on("load", () => {
         this.isLoaded = true;
-        resolve2(this);
+        resolve5(this);
       });
     });
-    const provideSyncedPromise = () => create4((resolve2) => {
+    const provideSyncedPromise = () => create4((resolve5) => {
       const eventHandler = (isSynced) => {
         if (isSynced === undefined || isSynced === true) {
           this.off("sync", eventHandler);
-          resolve2();
+          resolve5();
         }
       };
       this.on("sync", eventHandler);
@@ -7076,13 +7608,13 @@ var cleanupTransactions = (transactionCleanups, i) => {
       sortAndMergeDeleteSet(ds);
       transaction.afterState = getStateVector(transaction.doc.store);
       doc.emit("beforeObserverCalls", [transaction, doc]);
-      const fs4 = [];
-      transaction.changed.forEach((subs, itemtype) => fs4.push(() => {
+      const fs6 = [];
+      transaction.changed.forEach((subs, itemtype) => fs6.push(() => {
         if (itemtype._item === null || !itemtype._item.deleted) {
           itemtype._callObserver(transaction, subs);
         }
       }));
-      fs4.push(() => {
+      fs6.push(() => {
         transaction.changedParentTypes.forEach((events, type) => {
           if (type._dEH.l.length > 0 && (type._item === null || !type._item.deleted)) {
             events = events.filter((event) => event.target._item === null || !event.target._item.deleted);
@@ -7091,19 +7623,19 @@ var cleanupTransactions = (transactionCleanups, i) => {
               event._path = null;
             });
             events.sort((event1, event2) => event1.path.length - event2.path.length);
-            fs4.push(() => {
+            fs6.push(() => {
               callEventHandlerListeners(type._dEH, events, transaction);
             });
           }
         });
-        fs4.push(() => doc.emit("afterTransaction", [transaction, doc]));
-        fs4.push(() => {
+        fs6.push(() => doc.emit("afterTransaction", [transaction, doc]));
+        fs6.push(() => {
           if (transaction._needFormattingCleanup) {
             cleanupYTextAfterTransaction(transaction);
           }
         });
       });
-      callAll(fs4, []);
+      callAll(fs6, []);
     } finally {
       if (doc.gc) {
         tryGcDeleteSet(ds, store, doc.gcFilter);
@@ -7559,10 +8091,10 @@ class YEvent {
   }
 }
 var getPathTo = (parent, child) => {
-  const path4 = [];
+  const path6 = [];
   while (child._item !== null && child !== parent) {
     if (child._item.parentSub !== null) {
-      path4.unshift(child._item.parentSub);
+      path6.unshift(child._item.parentSub);
     } else {
       let i = 0;
       let c = child._item.parent._start;
@@ -7572,11 +8104,11 @@ var getPathTo = (parent, child) => {
         }
         c = c.right;
       }
-      path4.unshift(i);
+      path6.unshift(i);
     }
     child = child._item.parent;
   }
-  return path4;
+  return path6;
 };
 var warnPrematureAccess = () => {
   warn("Invalid access: Add Yjs type to a document before reading data.");
@@ -10301,18 +10833,18 @@ function bytesToDoc(bytes) {
 }
 
 // src/fs-edit.ts
-import { mkdirSync as mkdirSync5, writeFileSync as writeFileSync4, readFileSync as readFileSync5 } from "node:fs";
-import { resolve as resolve2, dirname as dirname5, sep as sep2 } from "node:path";
+import { mkdirSync as mkdirSync7, writeFileSync as writeFileSync6, readFileSync as readFileSync7 } from "node:fs";
+import { resolve as resolve6, dirname as dirname7, sep as sep2 } from "node:path";
 
 // src/watch-auto.ts
-function isExactPathWatch(predicate, path4) {
+function isExactPathWatch(predicate, path6) {
   if (predicate.kind !== "entry")
     return false;
   const p = predicate;
-  return p.path === path4 && p.performative === undefined && p.thread === undefined && p.mention_me === undefined && p.participant === undefined && p.task_ref === undefined;
+  return p.path === path6 && p.performative === undefined && p.thread === undefined && p.mention_me === undefined && p.participant === undefined && p.task_ref === undefined;
 }
-async function subscribePathWatch(client2, path4) {
-  const result = await client2.postWatch({ kind: "entry", path: path4 });
+async function subscribePathWatch(client2, path6) {
+  const result = await client2.postWatch({ kind: "entry", path: path6 });
   if (!result.ok)
     return { ok: false, error: result.error, detail: result.detail };
   return { ok: true };
@@ -10340,10 +10872,10 @@ async function registerDeliverAutoWatch(client2, taskRef) {
   }
   return Promise.all(["ANNOUNCED", "DONE"].map((to) => subscribeTaskStateWatch(client2, taskRef, to, existing)));
 }
-async function unsubscribePathWatch(client2, path4) {
+async function unsubscribePathWatch(client2, path6) {
   try {
     const watches = await client2.getWatches();
-    const mine = watches.find((w) => isExactPathWatch(w.predicate, path4));
+    const mine = watches.find((w) => isExactPathWatch(w.predicate, path6));
     if (!mine)
       return false;
     await client2.deleteWatch(mine.id);
@@ -10355,6 +10887,36 @@ async function unsubscribePathWatch(client2, path4) {
 function extractLockHolder(detail) {
   const m = /is locked by '([^']+)'/.exec(detail);
   return m?.[1];
+}
+
+// src/attachment.ts
+import { realpathSync } from "node:fs";
+import { resolve as resolve5 } from "node:path";
+import * as os4 from "node:os";
+function resolveAndAttachRoot(opts) {
+  const rootFlag = opts.rootFlag === "" ? undefined : opts.rootFlag;
+  const resolved = resolveStatusRoot(rootFlag, opts.cwd, { origin: opts.origin, roomId: opts.roomId });
+  const root = resolved?.root ?? resolve5(opts.cwd);
+  const real = (p) => {
+    try {
+      return realpathSync(p);
+    } catch {
+      return p;
+    }
+  };
+  const isGuardedRoot = real(root) === real(resolve5(os4.homedir())) || real(root) === real(resolve5(opts.home));
+  if (isGuardedRoot) {
+    return {
+      ok: false,
+      error: `refusing to attach ${root} — it is $HOME or this room's MESH_HOME, never a room checkout. Run this from your actual working copy, or pass --root/--into.`
+    };
+  }
+  upsertAttachment(root, { origin: opts.origin, roomId: opts.roomId });
+  setDefaultWorkspaceRoot(roomKeyFor(opts.origin, opts.roomId), root, opts.home);
+  return { ok: true, root, resolved };
+}
+function resolveRootFlag(intoFlag, rootFlag) {
+  return (intoFlag || undefined) ?? (rootFlag || undefined);
 }
 
 // src/fs-edit.ts
@@ -10371,11 +10933,19 @@ function ok(msg) {
   process.stdout.write(msg + `
 `);
 }
-async function fsCmdEdit(client2, args2, _senderId) {
+async function fsCmdEdit(client2, args2, senderId, origin) {
   const repopath = args2.positional[0];
   if (!repopath)
     die("fs edit: <path> is required");
-  const into = resolveWorkspaceRoot(flag(args2, "into"), flag(args2, "root"));
+  const home = flag(args2, "home") ?? meshHome();
+  const attach = resolveAndAttachRoot({ rootFlag: resolveRootFlag(flag(args2, "into"), flag(args2, "root")), cwd: process.cwd(), home, origin, roomId: client2.roomId });
+  if (!attach.ok)
+    die(attach.error);
+  const { root: into, resolved } = attach;
+  if (resolved !== null && into !== resolve6(process.cwd()))
+    process.stderr.write(`root: ${into} (resolved via ${resolved.source})
+`);
+  const roomKey = roomKeyFor(origin, client2.roomId);
   const ac = new AbortController;
   const buffered = [];
   let liveApply = false;
@@ -10425,19 +10995,19 @@ async function fsCmdEdit(client2, args2, _senderId) {
   for (const u of buffered)
     applyUpdateB64(editState.doc, u);
   buffered.length = 0;
-  const fsBase = resolve2(into);
-  const fsDest = resolve2(into, repopath);
+  const fsBase = resolve6(into);
+  const fsDest = resolve6(into, repopath);
   if (fsDest !== fsBase && !fsDest.startsWith(fsBase + sep2)) {
     ac.abort();
     await followTask;
     die("fs edit: path escapes target directory");
   }
-  mkdirSync5(dirname5(fsDest), { recursive: true });
+  mkdirSync7(dirname7(fsDest), { recursive: true });
   const roomId = client2.roomId;
   const tipText = docToText(editState.doc);
   let localBytes;
   try {
-    localBytes = readFileSync5(fsDest);
+    localBytes = readFileSync7(fsDest);
   } catch {
     localBytes = undefined;
   }
@@ -10447,7 +11017,7 @@ async function fsCmdEdit(client2, args2, _senderId) {
     die(`fs edit: ${repopath} contains unresolved conflict markers from a previous session — resolve them (or delete the local file) and re-run`);
   }
   const decision = decideEditWrite({
-    sidecar: readSidecar(roomId, repopath),
+    sidecar: readSidecarResolved(into, roomKey, roomId, repopath, home),
     tipText,
     tipHash: nodeHashRef ?? "",
     localBytes
@@ -10459,20 +11029,20 @@ async function fsCmdEdit(client2, args2, _senderId) {
       ok(decision.warning);
       break;
     case "clean":
-      writeFileSync4(fsDest, decision.text, "utf8");
-      writeSidecar(roomId, repopath, decision.sidecar);
+      writeFileSync6(fsDest, decision.text, "utf8");
+      writeFolderSidecar(into, roomKey, repopath, decision.sidecar);
       ok(`fs edit: loaded ${repopath} → ${fsDest}`);
       break;
     case "merged":
       setText(editState.doc, decision.text);
-      writeFileSync4(fsDest, decision.text, "utf8");
-      writeSidecar(roomId, repopath, decision.sidecar);
+      writeFileSync6(fsDest, decision.text, "utf8");
+      writeFolderSidecar(into, roomKey, repopath, decision.sidecar);
       if (decision.warning)
         ok(decision.warning);
       ok(`fs edit: loaded ${repopath} → ${fsDest} (local edits merged with room tip)`);
       break;
     case "conflict":
-      writeFileSync4(fsDest, decision.text, "utf8");
+      writeFileSync6(fsDest, decision.text, "utf8");
       conflictPending = true;
       conflictBaseText = tipText;
       ok(decision.warning);
@@ -10486,7 +11056,7 @@ async function fsCmdEdit(client2, args2, _senderId) {
   const publishSnapshot = async () => {
     let localText;
     try {
-      localText = readFileSync5(fsDest, "utf8");
+      localText = readFileSync7(fsDest, "utf8");
     } catch {
       localText = docToText(editState.doc);
     }
@@ -10498,12 +11068,12 @@ async function fsCmdEdit(client2, args2, _senderId) {
       const currentDocText = docToText(editState.doc);
       const fold = decideFoldBack(conflictBaseText, currentDocText, localText);
       if (fold.kind === "conflict") {
-        writeFileSync4(fsDest, fold.text, "utf8");
+        writeFileSync6(fsDest, fold.text, "utf8");
         ok(fold.warning);
         return;
       }
       if (fold.kind === "merged") {
-        writeFileSync4(fsDest, fold.text, "utf8");
+        writeFileSync6(fsDest, fold.text, "utf8");
         ok(fold.warning);
       }
       setText(editState.doc, fold.text);
@@ -10527,7 +11097,7 @@ async function fsCmdEdit(client2, args2, _senderId) {
     const r = await client2.postEntry({ performative: "file.write", data: postData });
     if (r.ok) {
       nodeHashRef = "r2:" + snapHash;
-      writeSidecar(roomId, repopath, { content: docToText(editState.doc), tip_hash: nodeHashRef });
+      writeFolderSidecar(into, roomKey, repopath, { content: docToText(editState.doc), tip_hash: nodeHashRef });
       ok(`fs edit: snapshot published (r2:${snapHash}, seq=${r.seq})`);
     } else {
       ok(`fs edit: snapshot post failed: [${r.error}]`);
@@ -10575,27 +11145,27 @@ function ok2(msg) {
 }
 async function fsCmdGrant(client2, args2, _senderId) {
   const subject = args2.positional[0];
-  const path4 = args2.positional[1];
+  const path6 = args2.positional[1];
   const grade = args2.positional[2];
-  if (!subject || !path4 || !grade)
+  if (!subject || !path6 || !grade)
     die2("fs grant: <subject> <path> <grade> are required");
   if (!isAccessGrade(grade)) {
     die2("fs grant: grade must be discover|read|write|exclusive");
   }
-  const r = await client2.grant(subject, path4, grade);
+  const r = await client2.grant(subject, path6, grade);
   if (!r.ok)
     die2(`fs grant: [${r.error}] ${r.detail}${r.hint ? " — " + r.hint : ""}`);
-  ok2(`fs grant ${grade} on ${path4} → ${subject} (seq=${r.seq})`);
+  ok2(`fs grant ${grade} on ${path6} → ${subject} (seq=${r.seq})`);
 }
 async function fsCmdRevoke(client2, args2, _senderId) {
   const subject = args2.positional[0];
-  const path4 = args2.positional[1];
-  if (!subject || !path4)
+  const path6 = args2.positional[1];
+  if (!subject || !path6)
     die2("fs revoke: <subject> <path> are required");
-  const r = await client2.revokeGrant(subject, path4);
+  const r = await client2.revokeGrant(subject, path6);
   if (!r.ok)
     die2(`fs revoke: [${r.error}] ${r.detail}${r.hint ? " — " + r.hint : ""}`);
-  ok2(`fs revoke: removed grant on ${path4} from ${subject} (seq=${r.seq})`);
+  ok2(`fs revoke: removed grant on ${path6} from ${subject} (seq=${r.seq})`);
 }
 async function fsCmdGrants(client2, _args, _senderId) {
   const grants = await client2.listGrants();
@@ -11027,8 +11597,8 @@ var DECIDE_CMDS = {
 };
 
 // src/doctor.ts
-import { readFileSync as readFileSync6, statSync } from "node:fs";
-import { join as join6 } from "node:path";
+import { readFileSync as readFileSync8, statSync } from "node:fs";
+import { join as join8 } from "node:path";
 function flagBool2(args2, name) {
   return args2.flags[name] !== undefined;
 }
@@ -11148,7 +11718,7 @@ function renderDoctorHuman(report) {
   lines.push(report.problemCount === 0 ? "doctor: all clear" : `doctor: ${report.problemCount} problem(s) found`);
   return lines;
 }
-async function scanWorkspace(client2, root, home) {
+async function scanWorkspace(client2, root, home, roomKey, legacyAmbiguous) {
   try {
     const [treeResult, leasesResult] = await Promise.all([client2.getTree(), client2.listLeases()]);
     if ("error" in treeResult)
@@ -11159,22 +11729,22 @@ async function scanWorkspace(client2, root, home) {
     try {
       if (statSync(root).isDirectory()) {
         for (const rel of walkDirFiles(root, makeIgnore(loadMeshignore(root), {}))) {
-          localAbsByPath.set(normalizeId(rel), join6(root, rel));
+          localAbsByPath.set(normalizeId(rel), join8(root, rel));
         }
       }
     } catch {}
     const local = new Map;
     for (const [p, abs2] of localAbsByPath) {
-      const bytes = readFileSync6(abs2);
+      const bytes = readFileSync8(abs2);
       const text = isValidUtf8Bytes(new Uint8Array(bytes)) ? bytes.toString("utf8") : undefined;
       local.set(p, { hash: "r2:" + sha256hex(new Uint8Array(bytes)), text });
     }
     const tip = new Map(treeResult.tree.map((n) => [n.path, n]));
     const lease = new Map(leasesResult.map((l) => [l.path, { holder: l.holder, expiresAtMs: l.lease_expires }]));
-    const sidecarOnlyPaths = listSidecarPaths(client2.roomId, home);
+    const sidecarOnlyPaths = roomKey !== undefined ? [...new Set([...listFolderSidecarPaths(root, roomKey), ...legacyAmbiguous ? [] : listSidecarPaths(client2.roomId, home)])] : legacyAmbiguous ? [] : listSidecarPaths(client2.roomId, home);
     const baseTipHash = new Map;
     for (const p of new Set([...local.keys(), ...tip.keys(), ...sidecarOnlyPaths])) {
-      const sidecar = readSidecar(client2.roomId, p, home);
+      const sidecar = roomKey !== undefined ? readSidecarResolved(root, roomKey, client2.roomId, p, home, legacyAmbiguous) : readSidecar(client2.roomId, p, home);
       if (sidecar)
         baseTipHash.set(p, sidecar.tip_hash);
     }
@@ -11231,7 +11801,7 @@ async function runDoctor(client2, args2, opts) {
     return;
   }
   const [workspace, verify2, artifacts] = await Promise.all([
-    scanWorkspace(client2, opts.root, opts.home),
+    scanWorkspace(client2, opts.root, opts.home, opts.roomKey, opts.legacyAmbiguous),
     computeVerifyOutcome(client2, state),
     computeArtifactsOutcome(client2, state)
   ]);
@@ -11273,11 +11843,11 @@ function ok5(msg) {
   process.stdout.write(msg + `
 `);
 }
-async function readCharterFile(client2, path4) {
-  const t = await client2.getTree(path4);
+async function readCharterFile(client2, path6) {
+  const t = await client2.getTree(path6);
   if (!("tree" in t))
     return { content: null, tip_seq: null };
-  const node = resolveNode(t.tree, path4);
+  const node = resolveNode(t.tree, path6);
   if (!node)
     return { content: null, tip_seq: null };
   let hash;
@@ -11300,12 +11870,12 @@ async function authorOf(client2, seq) {
     return null;
   }
 }
-async function resolveCharterSection(client2, path4) {
-  const { content, tip_seq } = await readCharterFile(client2, path4);
+async function resolveCharterSection(client2, path6) {
+  const { content, tip_seq } = await readCharterFile(client2, path6);
   if (content === null)
-    return { path: path4, content: null, tip_seq: null, author: null };
+    return { path: path6, content: null, tip_seq: null, author: null };
   const author = await authorOf(client2, tip_seq);
-  return { path: path4, content, tip_seq, author };
+  return { path: path6, content, tip_seq, author };
 }
 async function resolveMyRoles(client2, selfId) {
   try {
@@ -11385,7 +11955,7 @@ function ownerAuthorityPostureWarning(state, selfId) {
 async function cmdBrief(args2) {
   const home = flag4(args2, "home");
   const roomArg = flag4(args2, "room");
-  const { roomId, entry: room } = resolveRoom(roomArg, home);
+  const { roomId, entry: room } = resolveRoom(roomArg, home, flag4(args2, "url"));
   const identity = loadIdentityWithSecret(home);
   if (!identity)
     die4('No identity. Run "mesh keygen" first.');
@@ -11456,7 +12026,7 @@ async function cmdOpen(args2, spawnOpener) {
   const roomArg = flag5(args2, "room");
   const readOnly = flagBool3(args2, "read-only");
   const printOnly = flagBool3(args2, "print");
-  const { entry: room } = resolveRoom(roomArg, home);
+  const { entry: room } = resolveRoom(roomArg, home, flag5(args2, "url") || undefined);
   let secretBytes = null;
   if (!readOnly) {
     const identity = loadIdentityWithSecret(home);
@@ -11560,12 +12130,14 @@ var COMMAND_SPEC = {
   "room join": { flags: ["passphrase", "host"], max: 2, names: ["room-url", "room-or-invite"] },
   "room invite": { flags: ["show", "rotate", "for", "passphrase", "ttl", "list", "revoke"], max: 1, names: ["room_id"] },
   "room list": { flags: [], max: 0, names: [] },
+  rooms: { flags: [], max: 0, names: [] },
   "room rm": { flags: [], max: 1, names: ["room_id"] },
   "room delete": { flags: [], max: 1, names: ["room_id"] },
   "room log": { flags: ["f", "all"], max: 0, names: [] },
   log: { flags: ["f", "all"], max: 0, names: [] },
   chat: { flags: [], max: 0, names: [] },
   open: { flags: ["read-only", "print"], max: 0, names: [] },
+  ui: { flags: ["port", "profile", "print", "no-open"], max: 0, names: [] },
   post: { flags: ["body", "thread"], max: 1, names: ["body"] },
   announce: { flags: ["body", "verdict-by", "claim-window-s", "lease-ttl-s", "max-claim-s", "depends-on"], max: 1, names: ["task_ref"] },
   claim: { flags: ["body", "artifact"], max: 1, names: ["task_ref"] },
@@ -11578,7 +12150,7 @@ var COMMAND_SPEC = {
   fetch: { flags: ["into"], max: 1, names: ["task-or-hash"] },
   "watch task": { flags: [], max: 2, names: ["task_ref", "STATE"] },
   "watch entry": { flags: ["performative", "thread", "mention-me", "path", "participant", "task-ref"], max: 0, names: [] },
-  "fs put": { flags: ["as", "all", "strict", "prune-ignored", "verbose", "v", "stop-on-error"], max: 1, names: ["path"] },
+  "fs put": { flags: ["as", "root", "all", "strict", "prune-ignored", "verbose", "v", "stop-on-error"], max: 1, names: ["path"] },
   "fs ls": { flags: ["f", "into", "root"], max: 1, names: ["prefix"] },
   "fs get": { flags: ["into", "root", "prune"], max: 1, names: ["repopath"] },
   "fs rm": { flags: ["r", "recursive"], max: 1, names: ["repopath"] },
@@ -11649,6 +12221,8 @@ var FLAG_ARITY = {
   thread: "value",
   "read-only": "boolean",
   print: "boolean",
+  port: "value",
+  "no-open": "boolean",
   "verdict-by": "value",
   "claim-window-s": "value",
   "lease-ttl-s": "value",
@@ -11764,23 +12338,1796 @@ function die6(msg) {
   process.exit(1);
 }
 
+// src/ui/server.ts
+import { createServer } from "node:http";
+
+// src/ui/router.ts
+class Router {
+  routes = [];
+  add(method, pattern, handler) {
+    this.routes.push({ method, segments: pattern.split("/").filter((s) => s.length > 0), handler });
+  }
+  get(pattern, handler) {
+    this.add("GET", pattern, handler);
+  }
+  post(pattern, handler) {
+    this.add("POST", pattern, handler);
+  }
+  match(method, pathname) {
+    const segs = pathname.split("/").filter((s) => s.length > 0);
+    for (const route of this.routes) {
+      if (route.method !== method || route.segments.length !== segs.length)
+        continue;
+      const params2 = {};
+      let matched = true;
+      for (let i = 0;i < segs.length; i++) {
+        const routeSeg = route.segments[i];
+        const pathSeg = segs[i];
+        if (routeSeg.startsWith(":")) {
+          try {
+            params2[routeSeg.slice(1)] = decodeURIComponent(pathSeg);
+          } catch {
+            return null;
+          }
+        } else if (routeSeg !== pathSeg) {
+          matched = false;
+          break;
+        }
+      }
+      if (matched)
+        return { handler: route.handler, params: params2 };
+    }
+    return null;
+  }
+}
+
+// src/ui/session.ts
+import { randomBytes as randomBytes2 } from "node:crypto";
+var SESSION_COOKIE_NAME = "mesh_ui";
+var LAUNCH_TOKEN_TTL_MS = 120000;
+
+class SessionStore {
+  launch = null;
+  cookies = new Set;
+  mintLaunch(now = Date.now()) {
+    const token = randomBytes2(32).toString("hex");
+    this.launch = { token, expiresAtMs: now + LAUNCH_TOKEN_TTL_MS };
+    return token;
+  }
+  exchangeLaunchToken(token, now = Date.now()) {
+    if (this.launch === null)
+      return null;
+    if (this.launch.token !== token)
+      return null;
+    if (now > this.launch.expiresAtMs) {
+      this.launch = null;
+      return null;
+    }
+    this.launch = null;
+    const cookie = randomBytes2(32).toString("hex");
+    this.cookies.add(cookie);
+    return cookie;
+  }
+  isValidCookie(cookie) {
+    return cookie !== null && this.cookies.has(cookie);
+  }
+}
+
+// src/ui/request-guard.ts
+var OK = { ok: true };
+var STATE_CHANGING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+function checkHost(host, expectedHostPort) {
+  if (host !== expectedHostPort) {
+    return {
+      ok: false,
+      status: 403,
+      rule: "host",
+      hint: "Host header didn't match this broker's bound port — reload; mesh ui may have relaunched on a different port"
+    };
+  }
+  return OK;
+}
+function checkStateChanging(method, origin, meshUiHeader, expectedOrigin) {
+  if (!STATE_CHANGING_METHODS.has(method))
+    return OK;
+  if (origin !== expectedOrigin)
+    return { ok: false, status: 403, rule: "origin" };
+  if (meshUiHeader !== "1")
+    return { ok: false, status: 403, rule: "x-mesh-ui" };
+  return OK;
+}
+function extractCookie(cookieHeader, name) {
+  if (cookieHeader === null)
+    return null;
+  for (const part of cookieHeader.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq === -1)
+      continue;
+    const key = part.slice(0, eq).trim();
+    if (key === name)
+      return part.slice(eq + 1).trim();
+  }
+  return null;
+}
+
+// src/ui/types.ts
+function observedOk(source, data, now = Date.now()) {
+  return { source, observedAt: now, availability: "ok", data };
+}
+function observedFailed(source, error, now = Date.now()) {
+  return { source, observedAt: now, availability: "failed", data: null, error };
+}
+
+// src/ui/routes/inventory.ts
+function buildInventory(registryDir, now = Date.now()) {
+  const homes = scanMachineInventory(registryDir);
+  const profiles = homes.map((h2) => ({
+    label: h2.label,
+    identityId: h2.identityId,
+    pubkey: h2.pubkey,
+    memberships: h2.memberships.map((m) => ({
+      membershipId: membershipId(h2.home, m.origin, m.roomId),
+      roomId: m.roomId,
+      origin: m.origin,
+      workspaceRoot: m.workspace_root,
+      active: m.active
+    }))
+  }));
+  return observedOk("local", profiles, now);
+}
+
+// src/ui/membership.ts
+function matchMembership(homes, mid) {
+  for (const scannedHome of homes) {
+    for (const membership of scannedHome.memberships) {
+      if (membershipId(scannedHome.home, membership.origin, membership.roomId) === mid) {
+        return {
+          home: scannedHome.home,
+          origin: membership.origin,
+          roomId: membership.roomId,
+          workspaceRoot: membership.workspace_root
+        };
+      }
+    }
+  }
+  return null;
+}
+function resolveMembership(mid, registryDir) {
+  return matchMembership(scanMachineInventory(registryDir), mid);
+}
+var DEFAULT_INVENTORY_MEMO_TTL_MS = 1000;
+function createMembershipResolver(registryDir, ttlMs = DEFAULT_INVENTORY_MEMO_TTL_MS, now = Date.now) {
+  let memo = null;
+  function freshScan() {
+    const homes = scanMachineInventory(registryDir);
+    memo = { homes, expiresAt: now() + ttlMs };
+    return homes;
+  }
+  return {
+    resolve(mid) {
+      const nowMs = now();
+      const memoWasWarm = memo !== null && nowMs < memo.expiresAt;
+      const homes = memoWasWarm ? memo.homes : freshScan();
+      const hit = matchMembership(homes, mid);
+      if (hit !== null)
+        return hit;
+      if (!memoWasWarm)
+        return null;
+      return matchMembership(freshScan(), mid);
+    }
+  };
+}
+function buildRoomClient(membership) {
+  try {
+    if (membership.home.length === 0 || membership.roomId.length === 0)
+      return null;
+    const expectedOrigin = new URL(membership.origin).origin;
+    if (expectedOrigin !== membership.origin)
+      return null;
+    const identity = loadIdentityWithSecret(membership.home);
+    if (identity === null || typeof identity.id !== "string" || identity.id.length === 0 || !(identity.secretBytes instanceof Uint8Array) || identity.secretBytes.length !== 32) {
+      return null;
+    }
+    const rooms = loadRooms(membership.home);
+    const entry = rooms.memberships[roomKeyFor(membership.origin, membership.roomId)];
+    if (typeof entry !== "object" || entry === null || typeof entry.url !== "string" || typeof entry.token !== "string" || entry.token.length === 0 || typeof entry.participant_id !== "string" || entry.participant_id !== identity.id) {
+      return null;
+    }
+    const roomUrl = new URL(entry.url);
+    if (roomUrl.origin !== membership.origin)
+      return null;
+    return new MeshClient({
+      roomUrl: entry.url,
+      token: entry.token,
+      senderId: identity.id,
+      roomId: membership.roomId,
+      secretBytes: identity.secretBytes
+    });
+  } catch {
+    return null;
+  }
+}
+
+// src/ui/routes/room.ts
+function isApiError(value) {
+  return typeof value === "object" && value !== null && "error" in value && typeof value.error === "string" && "detail" in value && typeof value.detail === "string";
+}
+function roomErrorMessage(error) {
+  if (error instanceof Error && error.message.length > 0)
+    return error.message;
+  return "room_request_failed";
+}
+async function proxyTree(client2, now = Date.now()) {
+  try {
+    const result = await client2.getTree();
+    if (isApiError(result)) {
+      return observedFailed("remote", `[${result.error}] ${result.detail}`, now);
+    }
+    return observedOk("remote", result, now);
+  } catch (error) {
+    return observedFailed("remote", roomErrorMessage(error), now);
+  }
+}
+async function proxyState(client2, now = Date.now()) {
+  try {
+    return observedOk("remote", await client2.getState(), now);
+  } catch (error) {
+    return observedFailed("remote", roomErrorMessage(error), now);
+  }
+}
+async function proxyEntries(client2, options, now = Date.now()) {
+  try {
+    return observedOk("remote", await client2.getEntries(options), now);
+  } catch (error) {
+    return observedFailed("remote", roomErrorMessage(error), now);
+  }
+}
+function parseEntriesOptions(requestUrl) {
+  let url;
+  try {
+    url = new URL(requestUrl ?? "/", "http://127.0.0.1");
+  } catch {
+    return null;
+  }
+  const sinceValues = url.searchParams.getAll("since");
+  const limitValues = url.searchParams.getAll("limit");
+  if (sinceValues.length > 1 || limitValues.length > 1)
+    return null;
+  let since;
+  if (sinceValues.length === 1) {
+    const rawSince = sinceValues[0];
+    if (!/^-?\d+$/.test(rawSince))
+      return null;
+    since = Number(rawSince);
+    if (!Number.isSafeInteger(since) || since < -1)
+      return null;
+  }
+  let limit;
+  if (limitValues.length === 1) {
+    const rawLimit = limitValues[0];
+    if (!/^\d+$/.test(rawLimit))
+      return null;
+    limit = Number(rawLimit);
+    if (!Number.isSafeInteger(limit) || limit < 1)
+      return null;
+  }
+  return {
+    ...since !== undefined ? { since } : {},
+    ...limit !== undefined ? { limit } : {}
+  };
+}
+function resolveRouteClient(mid, resolve7) {
+  try {
+    const membership = resolve7(mid);
+    if (membership === null) {
+      return { ok: false, status: 404, error: "unknown_membership" };
+    }
+    const client2 = buildRoomClient(membership);
+    if (client2 === null) {
+      return { ok: false, status: 200, error: "membership_credentials_unavailable" };
+    }
+    return { ok: true, client: client2 };
+  } catch {
+    return { ok: false, status: 200, error: "membership_resolution_failed" };
+  }
+}
+function registerRoomRoutes(router, registryDir, testSeam = {}) {
+  const resolve7 = testSeam.resolveMembershipForTest ?? ((mid) => resolveMembership(mid, registryDir));
+  router.get("/api/memberships/:mid/tree", async (_req, res, params2) => {
+    const resolved = resolveRouteClient(params2["mid"] ?? "", resolve7);
+    if (!resolved.ok) {
+      sendJson(res, resolved.status, observedFailed("remote", resolved.error));
+      return;
+    }
+    sendJson(res, 200, await proxyTree(resolved.client));
+  });
+  router.get("/api/memberships/:mid/state", async (_req, res, params2) => {
+    const resolved = resolveRouteClient(params2["mid"] ?? "", resolve7);
+    if (!resolved.ok) {
+      sendJson(res, resolved.status, observedFailed("remote", resolved.error));
+      return;
+    }
+    sendJson(res, 200, await proxyState(resolved.client));
+  });
+  router.get("/api/memberships/:mid/entries", async (req, res, params2) => {
+    const options = parseEntriesOptions(req.url);
+    if (options === null) {
+      sendJson(res, 400, observedFailed("remote", "invalid_entries_query"));
+      return;
+    }
+    const resolved = resolveRouteClient(params2["mid"] ?? "", resolve7);
+    if (!resolved.ok) {
+      sendJson(res, resolved.status, observedFailed("remote", resolved.error));
+      return;
+    }
+    sendJson(res, 200, await proxyEntries(resolved.client, options));
+  });
+}
+
+// src/ui/room-hub.ts
+class RoomHub {
+  rooms = new Map;
+  subscribe(mid, makeClient, onFrame, onEnd = () => {}) {
+    let entry = this.rooms.get(mid);
+    let client2 = null;
+    let shouldStart = false;
+    if (entry === undefined) {
+      try {
+        client2 = makeClient();
+      } catch {
+        return () => {};
+      }
+      if (client2 === null)
+        return () => {};
+      entry = {
+        controller: new AbortController,
+        subscribers: new Set
+      };
+      this.rooms.set(mid, entry);
+      shouldStart = true;
+    }
+    const subscriber = { onFrame, onEnd };
+    entry.subscribers.add(subscriber);
+    if (shouldStart)
+      this.pump(mid, entry, client2);
+    let subscribed = true;
+    return () => {
+      if (!subscribed)
+        return;
+      subscribed = false;
+      entry.subscribers.delete(subscriber);
+      if (this.rooms.get(mid) !== entry || entry.subscribers.size !== 0)
+        return;
+      this.rooms.delete(mid);
+      entry.controller.abort();
+    };
+  }
+  async pump(mid, entry, client2) {
+    try {
+      for await (const frame of client2.follow(undefined, entry.controller.signal)) {
+        for (const subscriber of [...entry.subscribers]) {
+          if (!entry.subscribers.has(subscriber))
+            continue;
+          try {
+            subscriber.onFrame(frame);
+          } catch {}
+        }
+      }
+    } catch {} finally {
+      const intentionalAbort = entry.controller.signal.aborted;
+      if (this.rooms.get(mid) === entry)
+        this.rooms.delete(mid);
+      if (!intentionalAbort) {
+        const remaining = [...entry.subscribers];
+        entry.subscribers.clear();
+        for (const subscriber of remaining) {
+          try {
+            subscriber.onEnd();
+          } catch {}
+        }
+      } else {
+        entry.subscribers.clear();
+      }
+    }
+  }
+}
+
+// src/ui/routes/events.ts
+var ENTRIES_PAGE_LIMIT = 100;
+function parseEventsOptions(requestUrl) {
+  let url;
+  try {
+    url = new URL(requestUrl ?? "/", "http://127.0.0.1");
+  } catch {
+    return null;
+  }
+  const values = url.searchParams.getAll("since");
+  if (values.length > 1)
+    return null;
+  if (values.length === 0)
+    return {};
+  const rawSince = values[0];
+  if (!/^-?\d+$/.test(rawSince))
+    return null;
+  const since = Number(rawSince);
+  if (!Number.isSafeInteger(since) || since < -1)
+    return null;
+  return { since };
+}
+function writeSseFrame(res, frame) {
+  res.write(`data: ${JSON.stringify(frame)}
+
+`);
+}
+function writeUpstreamEnded(res) {
+  res.write(`event: error
+data: {"error":"upstream_ended"}
+
+`);
+  res.end();
+}
+async function fetchBackfillEntries(client2, since, shouldStop) {
+  const entries = [];
+  let pageSince = since;
+  for (;; ) {
+    const page = await client2.getEntries({ since: pageSince, limit: ENTRIES_PAGE_LIMIT });
+    entries.push(...page.entries);
+    if (page.entries.length < ENTRIES_PAGE_LIMIT || shouldStop())
+      break;
+    pageSince = page.entries[page.entries.length - 1].seq;
+  }
+  return entries;
+}
+function registerEventsRoute(router, hub, registryDir, testSeam = {}) {
+  const activeRequests = new Set;
+  let disposed = false;
+  const resolve7 = testSeam.resolveMembershipForTest ?? ((mid) => resolveMembership(mid, registryDir));
+  const buildClient = testSeam.buildRoomClientForTest ?? ((membership) => buildRoomClient(membership));
+  router.get("/api/memberships/:mid/events", async (req, res, params2) => {
+    if (disposed) {
+      res.destroy();
+      return;
+    }
+    const options = parseEventsOptions(req.url);
+    if (options === null) {
+      sendJson(res, 400, observedFailed("remote", "invalid_events_query"));
+      return;
+    }
+    let membership;
+    try {
+      membership = resolve7(params2["mid"] ?? "");
+    } catch {
+      sendJson(res, 200, observedFailed("remote", "membership_resolution_failed"));
+      return;
+    }
+    if (membership === null) {
+      sendJson(res, 404, observedFailed("remote", "unknown_membership"));
+      return;
+    }
+    let client2;
+    try {
+      client2 = buildClient(membership);
+    } catch {
+      sendJson(res, 200, observedFailed("remote", "membership_client_failed"));
+      return;
+    }
+    if (client2 === null) {
+      sendJson(res, 200, observedFailed("remote", "membership_credentials_unavailable"));
+      return;
+    }
+    let live = false;
+    let terminal = false;
+    let upstreamEnded = false;
+    let unsubscribeRaw = () => {};
+    let subscribed = true;
+    let disposeRequest = () => {};
+    const stopSubscription = () => {
+      if (!subscribed)
+        return;
+      subscribed = false;
+      unsubscribeRaw();
+    };
+    const cleanupRequest = () => {
+      if (terminal)
+        return false;
+      terminal = true;
+      stopSubscription();
+      activeRequests.delete(disposeRequest);
+      return true;
+    };
+    disposeRequest = () => {
+      if (!cleanupRequest() || res.destroyed || res.writableEnded)
+        return;
+      if (res.headersSent)
+        res.end();
+      else
+        res.destroy();
+    };
+    activeRequests.add(disposeRequest);
+    const buffered = [];
+    const replayedEntrySeqs = new Set;
+    let highestEntrySeq = -1;
+    const emitLive = (frame) => {
+      if (terminal)
+        return;
+      if (frame.type === "entry") {
+        if (frame.entry.seq <= highestEntrySeq)
+          return;
+        highestEntrySeq = frame.entry.seq;
+      }
+      writeSseFrame(res, frame);
+    };
+    unsubscribeRaw = hub.subscribe(params2["mid"] ?? "", () => client2, (frame) => {
+      if (terminal || upstreamEnded)
+        return;
+      if (live)
+        emitLive(frame);
+      else
+        buffered.push(frame);
+    }, () => {
+      if (terminal || upstreamEnded)
+        return;
+      upstreamEnded = true;
+      if (!live || !cleanupRequest())
+        return;
+      writeUpstreamEnded(res);
+    });
+    req.on("close", () => {
+      cleanupRequest();
+    });
+    let backfillEntries;
+    try {
+      backfillEntries = await fetchBackfillEntries(client2, options.since, () => terminal);
+    } catch {
+      if (!cleanupRequest())
+        return;
+      sendJson(res, 200, observedFailed("remote", "entries_backfill_failed"));
+      return;
+    }
+    if (terminal)
+      return;
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive"
+    });
+    res.flushHeaders();
+    for (const entry of backfillEntries) {
+      if (replayedEntrySeqs.has(entry.seq))
+        continue;
+      replayedEntrySeqs.add(entry.seq);
+      highestEntrySeq = Math.max(highestEntrySeq, entry.seq);
+      writeSseFrame(res, { type: "entry", entry });
+    }
+    for (const frame of buffered) {
+      if (frame.type === "entry") {
+        if (replayedEntrySeqs.has(frame.entry.seq))
+          continue;
+        replayedEntrySeqs.add(frame.entry.seq);
+        highestEntrySeq = Math.max(highestEntrySeq, frame.entry.seq);
+      }
+      writeSseFrame(res, frame);
+    }
+    buffered.length = 0;
+    live = true;
+    if (upstreamEnded && cleanupRequest()) {
+      writeUpstreamEnded(res);
+    }
+  });
+  return {
+    dispose() {
+      if (disposed)
+        return;
+      disposed = true;
+      for (const disposeRequest of [...activeRequests])
+        disposeRequest();
+      activeRequests.clear();
+    }
+  };
+}
+
+// src/ui/routes/post.ts
+var ALLOWED_POST_PERFORMATIVES = new Set([
+  ...COMPOSER_SPEC.map((template) => template.performative),
+  "request"
+]);
+function ownProperty(value, key) {
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  if (descriptor === undefined)
+    return { kind: "missing" };
+  if (!("value" in descriptor))
+    return { kind: "accessor" };
+  return { kind: "data", value: descriptor.value };
+}
+function hasPlainPrototype(value) {
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+function cloneJson(value) {
+  if (value === null || typeof value === "boolean" || typeof value === "string") {
+    return { ok: true, value };
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? { ok: true, value } : { ok: false };
+  }
+  if (Array.isArray(value)) {
+    const output = [];
+    for (const item of value) {
+      const cloned = cloneJson(item);
+      if (!cloned.ok)
+        return cloned;
+      output.push(cloned.value);
+    }
+    return { ok: true, value: output };
+  }
+  if (typeof value !== "object" || !hasPlainPrototype(value))
+    return { ok: false };
+  const entries = [];
+  for (const key of Object.keys(value)) {
+    const property = ownProperty(value, key);
+    if (property.kind !== "data")
+      return { ok: false };
+    const cloned = cloneJson(property.value);
+    if (!cloned.ok)
+      return cloned;
+    entries.push([key, cloned.value]);
+  }
+  return { ok: true, value: Object.fromEntries(entries) };
+}
+function jsonValuesEqual(left, right) {
+  if (Object.is(left, right))
+    return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left) && Array.isArray(right) && left.length === right.length && left.every((value, index) => jsonValuesEqual(value, right[index]));
+  }
+  if (typeof left !== "object" || left === null || typeof right !== "object" || right === null || !hasPlainPrototype(left) || !hasPlainPrototype(right)) {
+    return false;
+  }
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  if (leftKeys.length !== rightKeys.length)
+    return false;
+  return leftKeys.every((key) => {
+    const leftProperty = ownProperty(left, key);
+    const rightProperty = ownProperty(right, key);
+    return leftProperty.kind === "data" && rightProperty.kind === "data" && jsonValuesEqual(leftProperty.value, rightProperty.value);
+  });
+}
+function compileComposerSchema(template) {
+  const allowedTopLevel = new Set(["performative"]);
+  const allowedData = new Set;
+  const dataFields = new Map;
+  for (const field of template.fields) {
+    if (field.target.startsWith("data.")) {
+      const key = field.target.slice("data.".length);
+      allowedData.add(key);
+      dataFields.set(key, field);
+    } else {
+      allowedTopLevel.add(field.target);
+    }
+  }
+  for (const key of Object.keys(template.fixedData ?? {}))
+    allowedData.add(key);
+  if (allowedData.size > 0)
+    allowedTopLevel.add("data");
+  return { template, allowedTopLevel, allowedData, dataFields };
+}
+var COMPOSER_SCHEMAS = new Map(COMPOSER_SPEC.map((template) => [template.performative, compileComposerSchema(template)]));
+function validateComposerField(performative, field, property) {
+  if (property.kind === "missing") {
+    if (!field.required)
+      return { ok: true, present: false };
+    return {
+      ok: false,
+      detail: performative === "request" && field.target === "body" ? "body is required" : `${field.label} is required`
+    };
+  }
+  if (property.kind === "accessor") {
+    return { ok: false, detail: `${field.target} must be a data property` };
+  }
+  switch (field.type) {
+    case "text": {
+      if (typeof property.value !== "string") {
+        const target = performative === "request" && field.target === "body" ? "body" : field.label;
+        return { ok: false, detail: `${target} must be a string` };
+      }
+      const value = property.value.trim();
+      if (value.length === 0) {
+        if (!field.required)
+          return { ok: true, present: false };
+        return {
+          ok: false,
+          detail: performative === "request" && field.target === "body" ? "body is required" : `${field.label} is required`
+        };
+      }
+      return { ok: true, present: true, value };
+    }
+    case "number":
+      return typeof property.value === "number" && Number.isInteger(property.value) ? { ok: true, present: true, value: property.value } : { ok: false, detail: `${field.label} must be an integer` };
+    case "enum": {
+      if (typeof property.value !== "string" || !field.options?.includes(property.value)) {
+        return {
+          ok: false,
+          detail: `${field.label} must be one of: ${(field.options ?? []).join(", ")}`
+        };
+      }
+      return { ok: true, present: true, value: property.value };
+    }
+    case "csv": {
+      if (!Array.isArray(property.value) || field.required && property.value.length === 0 || !property.value.every((item) => typeof item === "string" && item.trim().length > 0)) {
+        return {
+          ok: false,
+          detail: `${field.label} must be an array of non-empty strings`
+        };
+      }
+      return {
+        ok: true,
+        present: true,
+        value: property.value.map((item) => item.trim())
+      };
+    }
+  }
+}
+function validatePostBody(body) {
+  try {
+    if (typeof body !== "object" || body === null || Array.isArray(body)) {
+      return { ok: false, detail: "request body must be an object" };
+    }
+    if (!hasPlainPrototype(body)) {
+      return { ok: false, detail: "request body must be a plain object" };
+    }
+    const performativeProperty = ownProperty(body, "performative");
+    if (performativeProperty.kind === "accessor") {
+      return { ok: false, detail: "performative must be a data property" };
+    }
+    const performative = performativeProperty.kind === "data" ? performativeProperty.value : undefined;
+    if (typeof performative !== "string" || performative.length === 0) {
+      return { ok: false, detail: "performative is required" };
+    }
+    const schema = COMPOSER_SCHEMAS.get(performative);
+    if (!ALLOWED_POST_PERFORMATIVES.has(performative) || schema === undefined) {
+      return {
+        ok: false,
+        detail: `performative "${performative}" is not composable from the manager`
+      };
+    }
+    for (const key of Object.keys(body)) {
+      const property = ownProperty(body, key);
+      if (property.kind === "accessor") {
+        return { ok: false, detail: `${key} must be a data property` };
+      }
+      if (!schema.allowedTopLevel.has(key)) {
+        return { ok: false, detail: `field "${key}" is not declared for ${performative}` };
+      }
+    }
+    const dataProperty = ownProperty(body, "data");
+    let sourceData;
+    if (dataProperty.kind === "accessor") {
+      return { ok: false, detail: "data must be a data property" };
+    }
+    if (dataProperty.kind === "data") {
+      if (typeof dataProperty.value !== "object" || dataProperty.value === null || Array.isArray(dataProperty.value) || !hasPlainPrototype(dataProperty.value)) {
+        return { ok: false, detail: "data must be a JSON object" };
+      }
+      sourceData = dataProperty.value;
+      for (const key of Object.keys(sourceData)) {
+        const property = ownProperty(sourceData, key);
+        if (property.kind === "accessor") {
+          return { ok: false, detail: `data.${key} must be a data property` };
+        }
+        if (!schema.allowedData.has(key)) {
+          return { ok: false, detail: `data field "${key}" is not declared for ${performative}` };
+        }
+      }
+    }
+    const input = { performative: schema.template.performative };
+    const outputData = {};
+    for (const field of schema.template.fields) {
+      const dataKey = field.target.startsWith("data.") ? field.target.slice("data.".length) : undefined;
+      const property = dataKey === undefined ? ownProperty(body, field.target) : sourceData === undefined ? { kind: "missing" } : ownProperty(sourceData, dataKey);
+      const validation = validateComposerField(performative, field, property);
+      if (!validation.ok)
+        return validation;
+      if (!validation.present)
+        continue;
+      if (dataKey !== undefined) {
+        outputData[dataKey] = validation.value;
+      } else if (field.target === "body") {
+        input.body = validation.value;
+      } else if (field.target === "task_ref") {
+        input.task_ref = validation.value;
+      } else if (field.target === "thread") {
+        input.thread = validation.value;
+      } else if (field.target === "artifacts") {
+        input.artifacts = validation.value;
+      }
+    }
+    for (const [key, fixedValue] of Object.entries(schema.template.fixedData ?? {})) {
+      if (schema.dataFields.has(key))
+        continue;
+      const property = sourceData === undefined ? { kind: "missing" } : ownProperty(sourceData, key);
+      if (property.kind !== "data" || !jsonValuesEqual(property.value, fixedValue)) {
+        return { ok: false, detail: `data.${key} must equal the composer-fixed value` };
+      }
+      const cloned = cloneJson(fixedValue);
+      if (!cloned.ok) {
+        return { ok: false, detail: `data.${key} has an invalid composer-fixed value` };
+      }
+      outputData[key] = cloned.value;
+    }
+    if (Object.keys(outputData).length > 0)
+      input.data = outputData;
+    return { ok: true, input };
+  } catch {
+    return { ok: false, detail: "request body must be a plain object" };
+  }
+}
+function registerPostRoute(router, registryDir, testSeam = {}) {
+  const resolve7 = testSeam.resolveMembershipForTest ?? ((mid) => resolveMembership(mid, registryDir));
+  router.post("/api/memberships/:mid/post", async (req, res, params2) => {
+    let membership;
+    try {
+      membership = resolve7(params2["mid"] ?? "");
+    } catch {
+      sendJson(res, 500, {
+        ok: false,
+        error: "membership_resolution_failed",
+        detail: "Membership could not be resolved",
+        status: 500
+      });
+      return;
+    }
+    if (membership === null) {
+      sendJson(res, 404, {
+        ok: false,
+        error: "unknown_membership",
+        detail: "Unknown membership",
+        status: 404
+      });
+      return;
+    }
+    const client2 = buildRoomClient(membership);
+    if (client2 === null) {
+      sendJson(res, 409, {
+        ok: false,
+        error: "identity_mismatch",
+        detail: "local identity does not match this membership's participant — cannot sign",
+        status: 409
+      });
+      return;
+    }
+    let body;
+    try {
+      body = await readJsonBody(req);
+    } catch {
+      sendJson(res, 400, {
+        ok: false,
+        error: "invalid_json_body",
+        detail: "Request body must be valid JSON",
+        status: 400
+      });
+      return;
+    }
+    const validation = validatePostBody(body);
+    if (!validation.ok) {
+      sendJson(res, 400, {
+        ok: false,
+        error: "invalid_post_body",
+        detail: validation.detail,
+        status: 400
+      });
+      return;
+    }
+    let result;
+    try {
+      result = await client2.postEntry(validation.input);
+    } catch {
+      sendJson(res, 200, {
+        ok: false,
+        error: "upstream_unreachable",
+        detail: "Room is unavailable",
+        status: 503
+      });
+      return;
+    }
+    sendJson(res, result.ok ? 200 : 422, result);
+  });
+}
+
+// src/ui/daemon-status.ts
+import { existsSync as existsSync6, readFileSync as readFileSync9 } from "node:fs";
+import { isAbsolute, join as join9 } from "node:path";
+function probeProcess(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0)
+    return;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    const code = error instanceof Error && "code" in error ? error.code : undefined;
+    if (code === "EPERM")
+      return true;
+    if (code === "ESRCH")
+      return false;
+    return;
+  }
+}
+function readWakeCursor(stateDir) {
+  const file = join9(stateDir, "wake_cursor.json");
+  if (!existsSync6(file))
+    return "none";
+  try {
+    const value = JSON.parse(readFileSync9(file, "utf8"));
+    if (typeof value !== "object" || value === null || !("seq" in value) || typeof value.seq !== "number" || !Number.isSafeInteger(value.seq) || value.seq < 0) {
+      return "unknown";
+    }
+    return value.seq;
+  } catch {
+    return "unknown";
+  }
+}
+function readPendingWake(stateDir, now) {
+  const file = join9(stateDir, "pending_wake.json");
+  if (!existsSync6(file))
+    return null;
+  try {
+    const value = JSON.parse(readFileSync9(file, "utf8"));
+    if (typeof value !== "object" || value === null || !("through_seq" in value) || typeof value.through_seq !== "number" || !Number.isSafeInteger(value.through_seq) || value.through_seq < 0 || !("ts" in value) || typeof value.ts !== "number" || !Number.isFinite(value.ts) || value.ts < 0 || value.ts > now) {
+      return "unknown";
+    }
+    return { throughSeq: value.through_seq, ageMs: now - value.ts };
+  } catch {
+    return "unknown";
+  }
+}
+function readHookState(stateDir) {
+  const file = join9(stateDir, "agent_state");
+  if (!existsSync6(file))
+    return "unknown";
+  try {
+    const value = readFileSync9(file, "utf8").trim();
+    return value === "idle" || value === "busy" ? value : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+function isReadableRegistration(value) {
+  return typeof value === "object" && value !== null && "stateDir" in value && typeof value.stateDir === "string" && isAbsolute(value.stateDir) && "pid" in value && typeof value.pid === "number";
+}
+function readDaemonStatus(registration, now = Date.now()) {
+  if (registration === undefined)
+    return { registered: false };
+  if (!isReadableRegistration(registration)) {
+    return {
+      registered: true,
+      alive: undefined,
+      wakeCursorSeq: "unknown",
+      pendingWake: "unknown",
+      hookState: "unknown"
+    };
+  }
+  return {
+    registered: true,
+    pid: registration.pid,
+    alive: probeProcess(registration.pid),
+    wakeCursorSeq: readWakeCursor(registration.stateDir),
+    pendingWake: readPendingWake(registration.stateDir, now),
+    hookState: readHookState(registration.stateDir)
+  };
+}
+
+// src/ui/fs-status-scan.ts
+import { readFileSync as readFileSync10, statSync as statSync2 } from "node:fs";
+import { isAbsolute as isAbsolute2, join as join10 } from "node:path";
+function isApiError2(value) {
+  return typeof value === "object" && value !== null && "error" in value && typeof value.error === "string" && "detail" in value && typeof value.detail === "string";
+}
+var fileCaches = new Map;
+async function scanFolderStatus(client2, root, roomKey, home) {
+  if (!isAbsolute2(root))
+    return { ok: false, reason: "local_workspace_unavailable" };
+  let rootStat;
+  try {
+    rootStat = statSync2(root);
+  } catch {
+    return { ok: false, reason: "local_workspace_unavailable" };
+  }
+  if (!rootStat.isDirectory())
+    return { ok: false, reason: "local_workspace_unavailable" };
+  let treeResult;
+  let leasesResult;
+  try {
+    [treeResult, leasesResult] = await Promise.all([client2.getTree(), client2.listLeases()]);
+  } catch {
+    return { ok: false, reason: "remote_status_unavailable" };
+  }
+  if (isApiError2(treeResult))
+    return { ok: false, reason: "remote_tree_unavailable" };
+  if (isApiError2(leasesResult))
+    return { ok: false, reason: "remote_leases_unavailable" };
+  try {
+    const resolvedRoot = root;
+    const cacheScope = `${roomKey}\x00${resolvedRoot}`;
+    const cache = fileCaches.get(cacheScope) ?? new Map;
+    fileCaches.set(cacheScope, cache);
+    const local = new Map;
+    const currentFiles = new Set;
+    const ignored = makeIgnore(loadMeshignore(resolvedRoot), {});
+    for (const rel of walkDirFiles(resolvedRoot, ignored)) {
+      const repopath = normalizeId(rel);
+      const absolutePath = join10(resolvedRoot, rel);
+      currentFiles.add(absolutePath);
+      const stat = statSync2(absolutePath);
+      const cached = cache.get(absolutePath);
+      if (cached !== undefined && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+        local.set(repopath, { hash: cached.hash, text: cached.text });
+        continue;
+      }
+      const bytes = readFileSync10(absolutePath);
+      const text = isValidUtf8Bytes(new Uint8Array(bytes)) ? bytes.toString("utf8") : undefined;
+      const hash = `r2:${sha256hex(new Uint8Array(bytes))}`;
+      cache.set(absolutePath, { mtimeMs: stat.mtimeMs, size: stat.size, hash, text });
+      local.set(repopath, { hash, text });
+    }
+    for (const cachedPath of cache.keys()) {
+      if (!currentFiles.has(cachedPath))
+        cache.delete(cachedPath);
+    }
+    const tip = new Map(treeResult.tree.map((node) => [node.path, node]));
+    const lease = new Map(leasesResult.map((entry) => [
+      entry.path,
+      { holder: entry.holder, expiresAtMs: entry.lease_expires }
+    ]));
+    const legacyAmbiguous = isRoomIdAmbiguous(client2.roomId, home);
+    const sidecarOnlyPaths = [...new Set([
+      ...listFolderSidecarPaths(resolvedRoot, roomKey),
+      ...legacyAmbiguous ? [] : listSidecarPaths(client2.roomId, home)
+    ])];
+    const baseTipHash = new Map;
+    for (const repopath of new Set([...local.keys(), ...tip.keys(), ...sidecarOnlyPaths])) {
+      const sidecar = readSidecarResolved(resolvedRoot, roomKey, client2.roomId, repopath, home, legacyAmbiguous);
+      if (sidecar !== undefined)
+        baseTipHash.set(repopath, sidecar.tip_hash);
+    }
+    return {
+      ok: true,
+      rows: composeStatusRows({ local, tip, baseTipHash, lease, sidecarOnlyPaths }, Date.now())
+    };
+  } catch {
+    return { ok: false, reason: "local_status_scan_failed" };
+  }
+}
+
+// src/ui/routes/status.ts
+var defaultDeps = {
+  loadRegistry: loadMachineRegistry,
+  buildClient: buildRoomClient,
+  scanFolder: scanFolderStatus
+};
+async function buildStatusResponse(membership, registryDir, now = Date.now(), deps = defaultDeps) {
+  let registry;
+  try {
+    registry = deps.loadRegistry(registryDir);
+  } catch {
+    return {
+      source: "local",
+      observedAt: now,
+      availability: "failed",
+      data: null,
+      error: "machine_registry_unavailable"
+    };
+  }
+  const roomKey = roomKeyFor(membership.origin, membership.roomId);
+  const daemon = readDaemonStatus(registry.daemons[daemonKey(membership.home, roomKey)], now);
+  if (membership.workspaceRoot === undefined) {
+    return {
+      source: "local",
+      observedAt: now,
+      availability: "unavailable",
+      data: { fs: null, daemon },
+      error: "no local workspace attached to this membership"
+    };
+  }
+  const client2 = deps.buildClient(membership);
+  if (client2 === null) {
+    return {
+      source: "local",
+      observedAt: now,
+      availability: "failed",
+      data: { fs: null, daemon },
+      error: "local identity does not match this membership's participant"
+    };
+  }
+  const outcome = await deps.scanFolder(client2, membership.workspaceRoot, roomKey, membership.home);
+  if (!outcome.ok) {
+    const noWorkspace = outcome.reason === "local_workspace_unavailable";
+    const localFailure = noWorkspace || outcome.reason === "local_status_scan_failed";
+    return {
+      source: localFailure ? "local" : "remote",
+      observedAt: now,
+      availability: noWorkspace ? "unavailable" : "failed",
+      data: { fs: null, daemon },
+      error: outcome.reason
+    };
+  }
+  return observedOk("derived", { fs: outcome.rows, daemon }, now);
+}
+var STATUS_DEBOUNCE_MS = 1000;
+function registerStatusRoute(router, registryDir, testSeam = {}) {
+  const resolve7 = testSeam.resolveMembershipForTest ?? createMembershipResolver(registryDir).resolve;
+  const clock = testSeam.clockForTest ?? Date.now;
+  const deps = {
+    loadRegistry: testSeam.loadRegistry ?? defaultDeps.loadRegistry,
+    buildClient: testSeam.buildClient ?? defaultDeps.buildClient,
+    scanFolder: testSeam.scanFolder ?? defaultDeps.scanFolder
+  };
+  const statusCache = new Map;
+  router.get("/api/memberships/:mid/status", async (_request, response, params2) => {
+    const mid = params2["mid"] ?? "";
+    const now = clock();
+    const cached = statusCache.get(mid);
+    if (cached !== undefined && now - cached.computedAtMs < STATUS_DEBOUNCE_MS) {
+      sendJson(response, 200, cached.response);
+      return;
+    }
+    let membership;
+    try {
+      membership = resolve7(mid);
+    } catch {
+      sendJson(response, 200, {
+        source: "local",
+        observedAt: now,
+        availability: "failed",
+        data: null,
+        error: "membership_resolution_failed"
+      });
+      return;
+    }
+    if (membership === null) {
+      sendJson(response, 404, { error: "unknown_membership" });
+      return;
+    }
+    const status = await buildStatusResponse(membership, registryDir, now, deps);
+    statusCache.set(mid, { response: status, computedAtMs: now });
+    sendJson(response, 200, status);
+  });
+}
+
+// src/ui-app.generated.ts
+var UI_APP_JS = 'var j8=Object.create;var{getPrototypeOf:q8,defineProperty:D$,getOwnPropertyNames:F8}=Object;var T8=Object.prototype.hasOwnProperty;function G8($){return this[$]}var O8,D8,W8=($,J,Q)=>{var Y=$!=null&&typeof $==="object";if(Y){var z=J?O8??=new WeakMap:D8??=new WeakMap,Z=z.get($);if(Z)return Z}Q=$!=null?j8(q8($)):{};let N=J||!$||!$.__esModule?D$(Q,"default",{value:$,enumerable:!0}):Q;for(let X of F8($))if(!T8.call(N,X))D$(N,X,{get:G8.bind($,X),enumerable:!0});if(Y)z.set($,N);return N};var C8=($,J)=>()=>(J||$((J={exports:{}}).exports,J),J.exports);var u$=C8((TQ,h$)=>{h$.exports=function $(J){if(typeof J==="number"&&isNaN(J))throw Error("NaN is not allowed");if(typeof J==="number"&&!isFinite(J))throw Error("Infinity is not allowed");if(J===null||typeof J!=="object")return JSON.stringify(J);if(J.toJSON instanceof Function)return $(J.toJSON());if(Array.isArray(J))return`[${J.reduce((z,Z,N)=>{return`${z}${N===0?"":","}${$(Z===void 0||typeof Z==="symbol"?null:Z)}`},"")}]`;return`{${Object.keys(J).sort().reduce((Y,z)=>{if(J[z]===void 0||typeof J[z]==="symbol")return Y;let Z=Y.length===0?"":",";return`${Y}${Z}${$(z)}:${$(J[z])}`},"")}}`}});function V($,J){let Q=document.createElement($);if(J)Q.className=J;return Q}function F($,J,Q){let Y=V($,J);return Y.textContent=Q==null?"":String(Q),Y}function E($){while($.firstChild)$.removeChild($.firstChild)}function m0($){if($==null||isNaN($))return"";let J=["B","KB","MB","GB","TB"],Q=0,Y=Number($);while(Y>=1024&&Q<J.length-1)Y/=1024,Q++;return(Q===0?Y:Y.toFixed(Y<10?1:0))+" "+J[Q]}function i($){if(!$)return"";let J=new Date($);if(isNaN(J.getTime()))return"";let Q=(Date.now()-J.getTime())/1000;if(Q<60)return"just now";if(Q<3600)return Math.floor(Q/60)+"m ago";if(Q<86400)return Math.floor(Q/3600)+"h ago";if(Q<2592000)return Math.floor(Q/86400)+"d ago";return J.toISOString().slice(0,10)}function w0($){if(!$)return"";let J=($-Date.now())/1000;if(J<=0)return"expired";if(J<60)return Math.ceil(J)+"s left";if(J<3600)return Math.ceil(J/60)+"m left";if(J<86400)return Math.floor(J/3600)+"h left";return Math.floor(J/86400)+"d left"}function v($){let J=new Date($);return isNaN(J.getTime())?"":J.toLocaleString()}function G0($){return(String($||"?").replace(/^[^a-zA-Z0-9]+/,"")[0]||"?").toUpperCase()}function p0($){return $.content_hash==null}function c0($,J,Q){E($);let Y=V("div","card"),z=V("div","idrow"),Z=Q.identity??{participant_id:"",pubkey:"",roles:[],specialties:[]};z.appendChild(F("div","avatar",G0(Z.participant_id)));let N=V("div","idmain");N.appendChild(F("div","name",Z.participant_id||"(unknown identity)"));let X=[];if(Z.specialties&&Z.specialties.length)X.push(Z.specialties.join(", "));else if(Z.roles&&Z.roles.length)X.push(Z.roles.join(", "));N.appendChild(F("div","sub",X.join(" · ")||"member of "+J)),z.appendChild(N);let q=V("div","badges");if(q.appendChild(F("span","badge "+(Q.mode==="member"?"member":"public"),Q.mode==="member"?"member view":"public view")),z.appendChild(q),Y.appendChild(z),Z.pubkey)Y.appendChild(F("div","pubkey",Z.pubkey));if($.appendChild(Y),!Q.tree_visible){let k=V("div","card");return k.appendChild(F("div","msg","This room\'s file listing is private. The owner has not enabled public sharing, so only the identity above is shown. Open this page with your member token to see the files you can access.")),$.appendChild(k),{treeVisible:!1}}let j=Q.tree??[],K=Q.mode==="member",U={mode:"tree",sort:"name",dir:1},T=[],G=null;function C(k,I,B){let P;if(U.sort==="size")P=(Number(k.size)||0)-(Number(I.size)||0);else if(U.sort==="modified")P=new Date(k.tip_ts||0).getTime()-new Date(I.tip_ts||0).getTime();else{let _=B?k.name??k.path:k.path,u=B?I.name??I.path:I.path;P=_<u?-1:_>u?1:0}return P*U.dir}function M(k){if(k.lease_holder){let I=k.lease_expires?" · "+w0(k.lease_expires):"",B=F("span","lease","\\uD83D\\uDD12 "+k.lease_holder+I);if(k.lease_expires)B.title="leased by "+k.lease_holder+" until "+v(k.lease_expires);return B}if(k.locked)return F("span","lease","\\uD83D\\uDD12 locked");return null}function O(k){let I=V("span","meta"),B=M(k);if(B)I.appendChild(B);if(p0(k))I.appendChild(F("span","lock","no read"));if(k.last_editor){let P=F("span","editor","✎ "+k.last_editor);P.title="last edited by "+k.last_editor,I.appendChild(P)}if(k.tip_ts){let P=F("span","mt",i(k.tip_ts));P.title="last modified "+v(k.tip_ts),I.appendChild(P)}return I.appendChild(F("span","sz",m0(k.size))),I}function R(k){let I={dirs:{},files:[]};for(let B of k){let P=String(B.path).split("/").filter(Boolean),_=I;for(let u=0;u<P.length-1;u++){let T0=P[u];_.dirs[T0]??={dirs:{},files:[]},_=_.dirs[T0]}_.files.push({...B,name:P.length?P[P.length-1]:B.path})}return I}function D(k){let I=k.files.length;for(let B of Object.keys(k.dirs))I+=D(k.dirs[B]);return I}function L(k,I){for(let B of Object.keys(k.dirs).sort()){let P=k.dirs[B],_=V("div","row dir"),u=F("span","twist","▾");_.appendChild(u),_.appendChild(F("span","icon","\\uD83D\\uDCC1")),_.appendChild(F("span","nm",B));let T0=V("span","meta");T0.appendChild(F("span","cnt",D(P)+" items")),_.appendChild(T0);let R0=V("div","children");T.push(R0),_.addEventListener("click",()=>{let K8=R0.classList.toggle("collapsed");u.textContent=K8?"▸":"▾"}),I.appendChild(_),I.appendChild(R0),L(P,R0)}k.files.slice().sort((B,P)=>C(B,P,!0)).forEach((B)=>{let P=V("div","row file");P.appendChild(F("span","twist","")),P.appendChild(F("span","icon",p0(B)?"\\uD83D\\uDEAB":"\\uD83D\\uDCC4")),P.appendChild(F("span","nm",B.name)),P.appendChild(O(B)),I.appendChild(P)})}function f(k,I){k.slice().sort((B,P)=>C(B,P,!1)).forEach((B)=>{let P=V("div","row file");P.appendChild(F("span","icon",p0(B)?"\\uD83D\\uDEAB":"\\uD83D\\uDCC4")),P.appendChild(F("span","nm path",B.path)),P.appendChild(O(B)),I.appendChild(P)})}function c(){if(!G)return;if(E(G),!j.length){G.appendChild(F("div","empty","No files in this room yet."));return}T=[];let k=V("div",U.mode==="tree"?"tree":"list");if(U.mode==="tree")L(R(j),k);else f(j,k);G.appendChild(k)}function b(k,I,B){let P=F("button","seg-btn"+(I?" active":""),k);return P.addEventListener("click",B),P}let H=V("div","toolbar");H.appendChild(F("span","count",j.length+" file"+(j.length===1?"":"s")));let g=V("span","seg"),m=V("span","seg"),y=F("button","link spacer","expand all"),t=F("button","link","collapse all");y.addEventListener("click",()=>{T.forEach((k)=>k.classList.remove("collapsed")),$.querySelectorAll(".row.dir .twist").forEach((k)=>k.textContent="▾")}),t.addEventListener("click",()=>{T.forEach((k)=>k.classList.add("collapsed")),$.querySelectorAll(".row.dir .twist").forEach((k)=>k.textContent="▸")});function s(){E(g),g.appendChild(F("span","seg-label","view")),g.appendChild(b("Tree",U.mode==="tree",()=>{U.mode="tree",s()})),g.appendChild(b("List",U.mode==="list",()=>{U.mode="list",s()})),E(m),m.appendChild(F("span","seg-label","sort")),[["name","Name"],["modified","Modified"],["size","Size"]].forEach(([I,B])=>{let P=U.sort===I,_=B+(P?U.dir<0?" ↓":" ↑":"");m.appendChild(b(_,P,()=>{if(U.sort===I)U.dir=U.dir===1?-1:1;else U.sort=I,U.dir=I==="name"?1:-1;s()}))});let k=U.mode==="tree";y.style.display=k?"":"none",t.style.display=k?"":"none",c()}H.appendChild(g),H.appendChild(m),H.appendChild(y),H.appendChild(t),$.appendChild(H);let a=V("div","legend");if(a.appendChild(F("span",null,"\\uD83D\\uDCC4 file")),a.appendChild(F("span",null,"\\uD83D\\uDEAB no read access")),a.appendChild(F("span",null,K?"\\uD83D\\uDD12 leased — holder · time left":"\\uD83D\\uDD12 leased (being edited)")),K)a.appendChild(F("span",null,"✎ last editor"));return a.appendChild(F("span",null,"time = last modified")),$.appendChild(a),G=V("div","card"),$.appendChild(G),s(),{treeVisible:!0}}/*! noble-ed25519 - MIT License (c) 2019 Paul Miller (paulmillr.com) */var k8={p:0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffedn,n:0x1000000000000000000000000000000014def9dea2f79cd65812631a5cf5d3edn,h:8n,a:0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffecn,d:0x52036cee2b6ffe738cc740797779e89800700a4d4141d8ab75eb4dca135978a3n,Gx:0x216936d3cd6e53fec0a4e231fdd6dc5c692cc7609525a7b2c9562d608f25d51an,Gy:0x6666666666666666666666666666666666666666666666666666666666666658n},{p:S,n:b0,Gx:W$,Gy:C$,a:v0,d:n0}=k8,M8=8n;var p=($="")=>{throw Error($)},V8=($)=>typeof $==="bigint",I$=($)=>typeof $==="string",R8=($)=>$ instanceof Uint8Array||ArrayBuffer.isView($)&&$.constructor.name==="Uint8Array",F0=($,J)=>!R8($)||typeof J==="number"&&J>0&&$.length!==J?p("Uint8Array expected"):$,I0=($)=>new Uint8Array($),i0=($)=>Uint8Array.from($),B$=($,J)=>$.toString(16).padStart(J,"0"),d0=($)=>Array.from(F0($)).map((J)=>B$(J,2)).join(""),d={_0:48,_9:57,A:65,F:70,a:97,f:102},k$=($)=>{if($>=d._0&&$<=d._9)return $-d._0;if($>=d.A&&$<=d.F)return $-(d.A-10);if($>=d.a&&$<=d.f)return $-(d.a-10);return},o0=($)=>{if(!I$($))return p("hex invalid");let Q=$.length,Y=Q/2;if(Q%2)return p("hex invalid");let z=I0(Y);for(let Z=0,N=0;Z<Y;Z++,N+=2){let X=k$($.charCodeAt(N)),q=k$($.charCodeAt(N+1));if(X===void 0||q===void 0)return p("hex invalid");z[Z]=X*16+q}return z},P8=($,J)=>F0(I$($)?o0($):i0(F0($)),J),E$=()=>globalThis?.crypto,L8=()=>E$()?.subtle??p("crypto.subtle must be defined"),M$=(...$)=>{let J=I0($.reduce((Y,z)=>Y+F0(z).length,0)),Q=0;return $.forEach((Y)=>{J.set(Y,Q),Q+=Y.length}),J},I8=($=32)=>{return E$().getRandomValues(I0($))},P0=BigInt,Y0=($,J,Q,Y="bad number: out of range")=>V8($)&&J<=$&&$<Q?$:p(Y),W=($,J=S)=>{let Q=$%J;return Q>=0n?Q:J+Q};var f$=($,J)=>{if($===0n||J<=0n)p("no inverse n="+$+" mod="+J);let Q=W($,J),Y=J,z=0n,Z=1n,N=1n,X=0n;while(Q!==0n){let q=Y/Q,j=Y%Q,K=z-N*q,U=Z-X*q;Y=Q,Q=j,z=N,Z=X,N=K,X=U}return Y===1n?W(z,J):p("no inverse")};var V$=($)=>$ instanceof w?$:p("Point expected"),h0=2n**256n;class w{static BASE;static ZERO;ex;ey;ez;et;constructor($,J,Q,Y){let z=h0;this.ex=Y0($,0n,z),this.ey=Y0(J,0n,z),this.ez=Y0(Q,1n,z),this.et=Y0(Y,0n,z),Object.freeze(this)}static fromAffine($){return new w($.x,$.y,1n,W($.x*$.y))}static fromBytes($,J=!1){let Q=n0,Y=i0(F0($,32)),z=$[31];Y[31]=z&-129;let Z=E8(Y);Y0(Z,0n,J?h0:S);let X=W(Z*Z),q=W(X-1n),j=W(Q*X+1n),{isValid:K,value:U}=H8(q,j);if(!K)p("bad point: y not sqrt");let T=(U&1n)===1n,G=(z&128)!==0;if(!J&&U===0n&&G)p("bad point: x==0, isLastByteOdd");if(G!==T)U=W(-U);return new w(U,Z,1n,W(U*Z))}assertValidity(){let $=v0,J=n0,Q=this;if(Q.is0())throw Error("bad point: ZERO");let{ex:Y,ey:z,ez:Z,et:N}=Q,X=W(Y*Y),q=W(z*z),j=W(Z*Z),K=W(j*j),U=W(X*$),T=W(j*W(U+q)),G=W(K+W(J*W(X*q)));if(T!==G)throw Error("bad point: equation left != right (1)");let C=W(Y*z),M=W(Z*N);if(C!==M)throw Error("bad point: equation left != right (2)");return this}equals($){let{ex:J,ey:Q,ez:Y}=this,{ex:z,ey:Z,ez:N}=V$($),X=W(J*N),q=W(z*Y),j=W(Q*N),K=W(Z*Y);return X===q&&j===K}is0(){return this.equals(q0)}negate(){return new w(W(-this.ex),this.ey,this.ez,W(-this.et))}double(){let{ex:$,ey:J,ez:Q}=this,Y=v0,z=W($*$),Z=W(J*J),N=W(2n*W(Q*Q)),X=W(Y*z),q=$+J,j=W(W(q*q)-z-Z),K=X+Z,U=K-N,T=X-Z,G=W(j*U),C=W(K*T),M=W(j*T),O=W(U*K);return new w(G,C,O,M)}add($){let{ex:J,ey:Q,ez:Y,et:z}=this,{ex:Z,ey:N,ez:X,et:q}=V$($),j=v0,K=n0,U=W(J*Z),T=W(Q*N),G=W(z*K*q),C=W(Y*X),M=W((J+Q)*(Z+N)-U-T),O=W(C-G),R=W(C+G),D=W(T-j*U),L=W(M*O),f=W(R*D),c=W(M*D),b=W(O*R);return new w(L,f,b,c)}multiply($,J=!0){if(!J&&($===0n||this.is0()))return q0;if(Y0($,1n,b0),$===1n)return this;if(this.equals(O0))return _8($).p;let Q=q0,Y=O0;for(let z=this;$>0n;z=z.double(),$>>=1n)if($&1n)Q=Q.add(z);else if(J)Y=Y.add(z);return Q}toAffine(){let{ex:$,ey:J,ez:Q}=this;if(this.equals(q0))return{x:0n,y:1n};let Y=f$(Q,S);if(W(Q*Y)!==1n)p("invalid inverse");return{x:W($*Y),y:W(J*Y)}}toBytes(){let{x:$,y:J}=this.assertValidity().toAffine(),Q=B8(J);return Q[31]|=$&1n?128:0,Q}toHex(){return d0(this.toBytes())}clearCofactor(){return this.multiply(P0(M8),!1)}isSmallOrder(){return this.clearCofactor().is0()}isTorsionFree(){let $=this.multiply(b0/2n,!1).double();if(b0%2n)$=$.add(this);return $.is0()}static fromHex($,J){return w.fromBytes(P8($),J)}get x(){return this.toAffine().x}get y(){return this.toAffine().y}toRawBytes(){return this.toBytes()}}var O0=new w(W$,C$,1n,W(W$*C$)),q0=new w(0n,1n,1n,0n);w.BASE=O0;w.ZERO=q0;var B8=($)=>o0(B$(Y0($,0n,h0),64)).reverse(),E8=($)=>P0("0x"+d0(i0(F0($)).reverse())),n=($,J)=>{let Q=$;while(J-- >0n)Q*=Q,Q%=S;return Q},f8=($)=>{let Q=$*$%S*$%S,Y=n(Q,2n)*Q%S,z=n(Y,1n)*$%S,Z=n(z,5n)*z%S,N=n(Z,10n)*Z%S,X=n(N,20n)*N%S,q=n(X,40n)*X%S,j=n(q,80n)*q%S,K=n(j,80n)*q%S,U=n(K,10n)*Z%S;return{pow_p_5_8:n(U,2n)*$%S,b2:Q}},R$=0x2b8324804fc1df0b2b4d00993dfbd7a72f431806ad2fe478c4ee1b274a0ea0b0n,H8=($,J)=>{let Q=W(J*J*J),Y=W(Q*Q*J),z=f8($*Y).pow_p_5_8,Z=W($*Q*z),N=W(J*Z*Z),X=Z,q=W(Z*R$),j=N===$,K=N===W(-$),U=N===W(-$*R$);if(j)Z=X;if(K||U)Z=q;if((W(Z)&1n)===1n)Z=W(-Z);return{isValid:j||K,value:Z}};var r0={sha512Async:async(...$)=>{let J=L8(),Q=M$(...$);return I0(await J.digest("SHA-512",Q.buffer))},sha512Sync:void 0,bytesToHex:d0,hexToBytes:o0,concatBytes:M$,mod:W,invert:f$,randomBytes:I8};var L0=8,g8=256,H$=Math.ceil(g8/L0)+1,u0=2**(L0-1),x8=()=>{let $=[],J=O0,Q=J;for(let Y=0;Y<H$;Y++){Q=J,$.push(Q);for(let z=1;z<u0;z++)Q=Q.add(J),$.push(Q);J=Q.double()}return $},P$=void 0,L$=($,J)=>{let Q=J.negate();return $?Q:J},_8=($)=>{let J=P$||(P$=x8()),Q=q0,Y=O0,z=2**L0,Z=z,N=P0(z-1),X=P0(L0);for(let q=0;q<H$;q++){let j=Number($&N);if($>>=X,j>u0)j-=Z,$+=1n;let K=q*u0,U=K,T=K+Math.abs(j)-1,G=q%2!==0,C=j<0;if(j===0)Y=Y.add(L$(G,J[U]));else Q=Q.add(L$(C,J[T]))}return{p:Q,f:Y}};/*! noble-hashes - MIT License (c) 2022 Paul Miller (paulmillr.com) */function A8($){return $ instanceof Uint8Array||ArrayBuffer.isView($)&&$.constructor.name==="Uint8Array"}function B0($,...J){if(!A8($))throw Error("Uint8Array expected");if(J.length>0&&!J.includes($.length))throw Error("Uint8Array expected of length "+J+", got length="+$.length)}function l0($,J=!0){if($.destroyed)throw Error("Hash instance has been destroyed");if(J&&$.finished)throw Error("Hash#digest() has already been called")}function g$($,J){B0($);let Q=J.outputLen;if($.length<Q)throw Error("digestInto() expects output buffer of length at least "+Q)}function D0(...$){for(let J=0;J<$.length;J++)$[J].fill(0)}function E0($){return new DataView($.buffer,$.byteOffset,$.byteLength)}function y8($){if(typeof $!=="string")throw Error("string expected");return new Uint8Array(new TextEncoder().encode($))}function t0($){if(typeof $==="string")$=y8($);return B0($),$}class s0{}function x$($){let J=(Y)=>$().update(t0(Y)).digest(),Q=$();return J.outputLen=Q.outputLen,J.blockLen=Q.blockLen,J.create=()=>$(),J}function m8($,J,Q,Y){if(typeof $.setBigUint64==="function")return $.setBigUint64(J,Q,Y);let z=BigInt(32),Z=BigInt(4294967295),N=Number(Q>>z&Z),X=Number(Q&Z),q=Y?4:0,j=Y?0:4;$.setUint32(J+q,N,Y),$.setUint32(J+j,X,Y)}class a0 extends s0{constructor($,J,Q,Y){super();this.finished=!1,this.length=0,this.pos=0,this.destroyed=!1,this.blockLen=$,this.outputLen=J,this.padOffset=Q,this.isLE=Y,this.buffer=new Uint8Array($),this.view=E0(this.buffer)}update($){l0(this),$=t0($),B0($);let{view:J,buffer:Q,blockLen:Y}=this,z=$.length;for(let Z=0;Z<z;){let N=Math.min(Y-this.pos,z-Z);if(N===Y){let X=E0($);for(;Y<=z-Z;Z+=Y)this.process(X,Z);continue}if(Q.set($.subarray(Z,Z+N),this.pos),this.pos+=N,Z+=N,this.pos===Y)this.process(J,0),this.pos=0}return this.length+=$.length,this.roundClean(),this}digestInto($){l0(this),g$($,this),this.finished=!0;let{buffer:J,view:Q,blockLen:Y,isLE:z}=this,{pos:Z}=this;if(J[Z++]=128,D0(this.buffer.subarray(Z)),this.padOffset>Y-Z)this.process(Q,0),Z=0;for(let K=Z;K<Y;K++)J[K]=0;m8(Q,Y-8,BigInt(this.length*8),z),this.process(Q,0);let N=E0($),X=this.outputLen;if(X%4)throw Error("_sha2: outputLen should be aligned to 32bit");let q=X/4,j=this.get();if(q>j.length)throw Error("_sha2: outputLen bigger than state");for(let K=0;K<q;K++)N.setUint32(4*K,j[K],z)}digest(){let{buffer:$,outputLen:J}=this;this.digestInto($);let Q=$.slice(0,J);return this.destroy(),Q}_cloneInto($){$||($=new this.constructor),$.set(...this.get());let{blockLen:J,buffer:Q,length:Y,finished:z,destroyed:Z,pos:N}=this;if($.destroyed=Z,$.finished=z,$.length=Y,$.pos=N,Y%J)$.buffer.set(Q);return $}clone(){return this._cloneInto()}}var x=Uint32Array.from([1779033703,4089235720,3144134277,2227873595,1013904242,4271175723,2773480762,1595750129,1359893119,2917565137,2600822924,725511199,528734635,4215389547,1541459225,327033209]);var f0=BigInt(4294967295),_$=BigInt(32);function w8($,J=!1){if(J)return{h:Number($&f0),l:Number($>>_$&f0)};return{h:Number($>>_$&f0)|0,l:Number($&f0)|0}}function S$($,J=!1){let Q=$.length,Y=new Uint32Array(Q),z=new Uint32Array(Q);for(let Z=0;Z<Q;Z++){let{h:N,l:X}=w8($[Z],J);[Y[Z],z[Z]]=[N,X]}return[Y,z]}var e0=($,J,Q)=>$>>>Q,$$=($,J,Q)=>$<<32-Q|J>>>Q,z0=($,J,Q)=>$>>>Q|J<<32-Q,Z0=($,J,Q)=>$<<32-Q|J>>>Q,W0=($,J,Q)=>$<<64-Q|J>>>Q-32,C0=($,J,Q)=>$>>>Q-32|J<<64-Q;function h($,J,Q,Y){let z=(J>>>0)+(Y>>>0);return{h:$+Q+(z/4294967296|0)|0,l:z|0}}var A$=($,J,Q)=>($>>>0)+(J>>>0)+(Q>>>0),y$=($,J,Q,Y)=>J+Q+Y+($/4294967296|0)|0,m$=($,J,Q,Y)=>($>>>0)+(J>>>0)+(Q>>>0)+(Y>>>0),w$=($,J,Q,Y,z)=>J+Q+Y+z+($/4294967296|0)|0,p$=($,J,Q,Y,z)=>($>>>0)+(J>>>0)+(Q>>>0)+(Y>>>0)+(z>>>0),c$=($,J,Q,Y,z,Z)=>J+Q+Y+z+Z+($/4294967296|0)|0;var b$=(()=>S$(["0x428a2f98d728ae22","0x7137449123ef65cd","0xb5c0fbcfec4d3b2f","0xe9b5dba58189dbbc","0x3956c25bf348b538","0x59f111f1b605d019","0x923f82a4af194f9b","0xab1c5ed5da6d8118","0xd807aa98a3030242","0x12835b0145706fbe","0x243185be4ee4b28c","0x550c7dc3d5ffb4e2","0x72be5d74f27b896f","0x80deb1fe3b1696b1","0x9bdc06a725c71235","0xc19bf174cf692694","0xe49b69c19ef14ad2","0xefbe4786384f25e3","0x0fc19dc68b8cd5b5","0x240ca1cc77ac9c65","0x2de92c6f592b0275","0x4a7484aa6ea6e483","0x5cb0a9dcbd41fbd4","0x76f988da831153b5","0x983e5152ee66dfab","0xa831c66d2db43210","0xb00327c898fb213f","0xbf597fc7beef0ee4","0xc6e00bf33da88fc2","0xd5a79147930aa725","0x06ca6351e003826f","0x142929670a0e6e70","0x27b70a8546d22ffc","0x2e1b21385c26c926","0x4d2c6dfc5ac42aed","0x53380d139d95b3df","0x650a73548baf63de","0x766a0abb3c77b2a8","0x81c2c92e47edaee6","0x92722c851482353b","0xa2bfe8a14cf10364","0xa81a664bbc423001","0xc24b8b70d0f89791","0xc76c51a30654be30","0xd192e819d6ef5218","0xd69906245565a910","0xf40e35855771202a","0x106aa07032bbd1b8","0x19a4c116b8d2d0c8","0x1e376c085141ab53","0x2748774cdf8eeb99","0x34b0bcb5e19b48a8","0x391c0cb3c5c95a63","0x4ed8aa4ae3418acb","0x5b9cca4f7763e373","0x682e6ff3d6b2b8a3","0x748f82ee5defb2fc","0x78a5636f43172f60","0x84c87814a1f0ab72","0x8cc702081a6439ec","0x90befffa23631e28","0xa4506cebde82bde9","0xbef9a3f7b2c67915","0xc67178f2e372532b","0xca273eceea26619c","0xd186b8c721c0c207","0xeada7dd6cde0eb1e","0xf57d4f7fee6ed178","0x06f067aa72176fba","0x0a637dc5a2c898a6","0x113f9804bef90dae","0x1b710b35131c471b","0x28db77f523047d84","0x32caab7b40c72493","0x3c9ebe0a15c9bebc","0x431d67c49c100d4c","0x4cc5d4becb3e42b6","0x597f299cfc657e2a","0x5fcb6fab3ad6faec","0x6c44198c4a475817"].map(($)=>BigInt($))))(),c8=(()=>b$[0])(),b8=(()=>b$[1])(),e=new Uint32Array(80),$0=new Uint32Array(80);class J$ extends a0{constructor($=64){super(128,$,16,!1);this.Ah=x[0]|0,this.Al=x[1]|0,this.Bh=x[2]|0,this.Bl=x[3]|0,this.Ch=x[4]|0,this.Cl=x[5]|0,this.Dh=x[6]|0,this.Dl=x[7]|0,this.Eh=x[8]|0,this.El=x[9]|0,this.Fh=x[10]|0,this.Fl=x[11]|0,this.Gh=x[12]|0,this.Gl=x[13]|0,this.Hh=x[14]|0,this.Hl=x[15]|0}get(){let{Ah:$,Al:J,Bh:Q,Bl:Y,Ch:z,Cl:Z,Dh:N,Dl:X,Eh:q,El:j,Fh:K,Fl:U,Gh:T,Gl:G,Hh:C,Hl:M}=this;return[$,J,Q,Y,z,Z,N,X,q,j,K,U,T,G,C,M]}set($,J,Q,Y,z,Z,N,X,q,j,K,U,T,G,C,M){this.Ah=$|0,this.Al=J|0,this.Bh=Q|0,this.Bl=Y|0,this.Ch=z|0,this.Cl=Z|0,this.Dh=N|0,this.Dl=X|0,this.Eh=q|0,this.El=j|0,this.Fh=K|0,this.Fl=U|0,this.Gh=T|0,this.Gl=G|0,this.Hh=C|0,this.Hl=M|0}process($,J){for(let D=0;D<16;D++,J+=4)e[D]=$.getUint32(J),$0[D]=$.getUint32(J+=4);for(let D=16;D<80;D++){let L=e[D-15]|0,f=$0[D-15]|0,c=z0(L,f,1)^z0(L,f,8)^e0(L,f,7),b=Z0(L,f,1)^Z0(L,f,8)^$$(L,f,7),H=e[D-2]|0,g=$0[D-2]|0,m=z0(H,g,19)^W0(H,g,61)^e0(H,g,6),y=Z0(H,g,19)^C0(H,g,61)^$$(H,g,6),t=m$(b,y,$0[D-7],$0[D-16]),s=w$(t,c,m,e[D-7],e[D-16]);e[D]=s|0,$0[D]=t|0}let{Ah:Q,Al:Y,Bh:z,Bl:Z,Ch:N,Cl:X,Dh:q,Dl:j,Eh:K,El:U,Fh:T,Fl:G,Gh:C,Gl:M,Hh:O,Hl:R}=this;for(let D=0;D<80;D++){let L=z0(K,U,14)^z0(K,U,18)^W0(K,U,41),f=Z0(K,U,14)^Z0(K,U,18)^C0(K,U,41),c=K&T^~K&C,b=U&G^~U&M,H=p$(R,f,b,b8[D],$0[D]),g=c$(H,O,L,c,c8[D],e[D]),m=H|0,y=z0(Q,Y,28)^W0(Q,Y,34)^W0(Q,Y,39),t=Z0(Q,Y,28)^C0(Q,Y,34)^C0(Q,Y,39),s=Q&z^Q&N^z&N,a=Y&Z^Y&X^Z&X;O=C|0,R=M|0,C=T|0,M=G|0,T=K|0,G=U|0,{h:K,l:U}=h(q|0,j|0,g|0,m|0),q=N|0,j=X|0,N=z|0,X=Z|0,z=Q|0,Z=Y|0;let k=A$(m,t,a);Q=y$(k,g,y,s),Y=k|0}({h:Q,l:Y}=h(this.Ah|0,this.Al|0,Q|0,Y|0)),{h:z,l:Z}=h(this.Bh|0,this.Bl|0,z|0,Z|0),{h:N,l:X}=h(this.Ch|0,this.Cl|0,N|0,X|0),{h:q,l:j}=h(this.Dh|0,this.Dl|0,q|0,j|0),{h:K,l:U}=h(this.Eh|0,this.El|0,K|0,U|0),{h:T,l:G}=h(this.Fh|0,this.Fl|0,T|0,G|0),{h:C,l:M}=h(this.Gh|0,this.Gl|0,C|0,M|0),{h:O,l:R}=h(this.Hh|0,this.Hl|0,O|0,R|0),this.set(Q,Y,z,Z,N,X,q,j,K,U,T,G,C,M,O,R)}roundClean(){D0(e,$0)}destroy(){D0(this.buffer),this.set(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)}}var v$=x$(()=>new J$);var n$=v$;var v8=W8(u$(),1);r0.sha512Sync=(...$)=>n$(r0.concatBytes(...$));var Q$={discover:1,read:2,write:3,exclusive:4};var i$={request:!0,inform:!0,deliver:!0,announce:!0,claim:!0,release:!0,accept:!0,reject:!0,escalate:!0,signal:!0,"key.rotate":!0,"file.write":!0,"file.delete":!0,"file.lock":!0,"file.unlock":!0,"file.request":!0,"system.genesis":!0,"system.join":!0,"system.leave":!0,"system.roles":!0,"system.grant":!0,"system.role":!0,"system.config":!0,"system.lease_clear":!0,"system.revoke":!0,"decide.request":!0,"decide.resolve":!0,"system.decision_lapse":!0,"system.role_lapse":!0,"escalate.ack":!0,"system.checkpoint":!0},Y$=["working","stuck","gone"];var l8={escalate:!0,"system.genesis":!0,"system.join":!0,"system.leave":!0,"system.roles":!0,"system.grant":!0,"system.role":!0,"system.config":!0,"system.lease_clear":!0,"system.revoke":!0,"system.decision_lapse":!0,"system.role_lapse":!0,"system.checkpoint":!0};function z$($){return $ in i$}var t8=Object.keys(i$).filter(($)=>!($ in l8)),Z$=["file.*","system.*"];function N$($,J){for(let Q of J){if(Q===$)return!0;if(Q.endsWith(".*")&&$.startsWith(Q.slice(0,-1)))return!0}return!1}var s8=Object.keys(Q$),H0=[{performative:"request",label:"Request",hint:"Ask the room for something (free-text chat).",fields:[{target:"body",label:"Message",type:"text",required:!0,sample:"Can someone look at the flaky CI?"},{target:"thread",label:"Thread",type:"text",required:!1,sample:"ci-flake"}]},{performative:"inform",label:"Inform",hint:"Share information — no reply expected.",fields:[{target:"body",label:"Message",type:"text",required:!0,sample:"Deploy finished, all green."},{target:"task_ref",label:"Task",type:"text",required:!1,sample:"t-123"},{target:"thread",label:"Thread",type:"text",required:!1,sample:"deploys"}]},{performative:"announce",label:"Announce task",hint:"Post a task others can claim (volunteer mode).",fixedData:{mode:"volunteer"},fields:[{target:"task_ref",label:"Task id",type:"text",required:!0,sample:"t-123"},{target:"body",label:"Description",type:"text",required:!0,sample:"Fix the login redirect loop"},{target:"data.verdict_by",label:"Verdict by",type:"csv",required:!1,sample:"alice@team"},{target:"data.claim_window_s",label:"Claim window (s)",type:"number",required:!1,sample:"300"},{target:"data.lease_ttl_s",label:"Lease TTL (s)",type:"number",required:!1,sample:"900"},{target:"data.max_claim_s",label:"Max claim (s)",type:"number",required:!1,sample:"3600"},{target:"data.depends_on",label:"Depends on",type:"csv",required:!1,sample:"t-100,t-101"}]},{performative:"claim",label:"Claim",hint:"Take an announced task.",fields:[{target:"task_ref",label:"Task id",type:"text",required:!0,sample:"t-123"},{target:"body",label:"Note",type:"text",required:!1,sample:"Taking this one."}]},{performative:"release",label:"Release",hint:"Give a claimed task back to the room.",fields:[{target:"task_ref",label:"Task id",type:"text",required:!0,sample:"t-123"},{target:"body",label:"Note",type:"text",required:!1,sample:"Out of my depth — releasing."}]},{performative:"deliver",label:"Deliver",hint:"Hand in work for a task (needs at least one artifact ref).",fields:[{target:"task_ref",label:"Task id",type:"text",required:!0,sample:"t-123"},{target:"artifacts",label:"Artifacts",type:"csv",required:!0,sample:"pr://org/repo/42"},{target:"body",label:"Note",type:"text",required:!1,sample:"PR up, tests green."}]},{performative:"accept",label:"Accept",hint:"Accept a delivery (verdict).",fields:[{target:"task_ref",label:"Task id",type:"text",required:!0,sample:"t-123"},{target:"body",label:"Note",type:"text",required:!1,sample:"Looks good — merged."}]},{performative:"reject",label:"Reject",hint:"Reject a delivery (verdict, with reason).",fields:[{target:"task_ref",label:"Task id",type:"text",required:!0,sample:"t-123"},{target:"body",label:"Reason",type:"text",required:!1,sample:"Breaks the mobile layout."}]},{performative:"signal",label:"Signal",hint:"Broadcast your liveness condition.",fields:[{target:"data.condition",label:"Condition",type:"enum",options:Y$,required:!0,sample:"working"},{target:"body",label:"Note",type:"text",required:!1,sample:"Deep in the merge conflict."}]},{performative:"decide.request",label:"Ask for decision",hint:"Open a decision with a named authority.",fields:[{target:"thread",label:"Decision id",type:"text",required:!0,sample:"d-1"},{target:"data.question",label:"Question",type:"text",required:!0,sample:"Ship option A or B?"},{target:"data.authority",label:"Authority",type:"csv",required:!0,sample:"id:alice@team,role:architect"},{target:"data.deadline",label:"Deadline (ISO)",type:"text",required:!1,sample:"2026-08-01T12:00:00Z"}]},{performative:"decide.resolve",label:"Resolve decision",hint:"Answer an open decision you hold authority over.",fields:[{target:"thread",label:"Decision id",type:"text",required:!0,sample:"d-1"},{target:"data.resolution",label:"Resolution",type:"text",required:!0,sample:"Option A"}]},{performative:"escalate.ack",label:"Ack escalation",hint:"Mark a room escalation as handled.",fields:[{target:"data.escalate_seq",label:"Escalation seq",type:"number",required:!0,sample:"42"}]},{performative:"file.request",label:"Request file access",hint:"Post an advisory access request for a path.",fields:[{target:"data.path",label:"Path",type:"text",required:!0,sample:"src/app.ts"},{target:"data.grade",label:"Grade",type:"enum",options:s8,required:!0,sample:"read"}]}];function X$($,J){let Q={performative:$.performative},Y={...$.fixedData};for(let z of $.fields){let Z=(J[z.target]??"").trim();if(Z===""){if(z.required)return{ok:!1,detail:`${z.label} is required`};continue}let N;switch(z.type){case"text":N=Z;break;case"number":{let X=Number(Z);if(!Number.isInteger(X))return{ok:!1,detail:`${z.label} must be an integer`};N=X;break}case"enum":if(!z.options?.includes(Z))return{ok:!1,detail:`${z.label} must be one of: ${(z.options??[]).join(", ")}`};N=Z;break;case"csv":N=Z.split(",").map((X)=>X.trim()).filter((X)=>X.length>0);break}if(z.target.startsWith("data."))Y[z.target.slice(5)]=N;else if(z.target==="artifacts")Q.artifacts=N;else if(z.target==="body")Q.body=N;else if(z.target==="task_ref")Q.task_ref=N;else if(z.target==="thread")Q.thread=N}if(Object.keys(Y).length>0)Q.data=Y;return{ok:!0,input:Q}}var U$=100,d$=1000,$J=48;function o$($){return N$($,Z$)}function r$($){let J=$.submission,Q=V("div","feed-row"),Y=V("div","feed-row-head");if(Y.appendChild(F("span","feed-seq","#"+$.seq)),Y.appendChild(F("span","feed-sender",J.sender)),Y.appendChild(F("span","feed-perf",J.performative)),J.task_ref)Y.appendChild(F("span","feed-chip","task:"+J.task_ref));if(J.thread)Y.appendChild(F("span","feed-chip","thread:"+J.thread));let z=F("span","feed-time",i($.room_ts));if(z.title=v($.room_ts),Y.appendChild(z),Q.appendChild(Y),J.body)Q.appendChild(F("div","feed-body",J.body));return Q}function K$($,J){E($);let Q=!1,Y=d$,z=[],Z=new Set,N=V("div","feed-toolbar"),X=V("label","feed-toggle"),q=document.createElement("input");q.type="checkbox",X.appendChild(q),X.appendChild(F("span",null,"show system")),N.appendChild(X),$.appendChild(N);let j=V("div","feed");$.appendChild(j);function K(){return j.scrollHeight-j.scrollTop-j.clientHeight<$J}let U=!1;function T(){let O=K();if(E(j),U)j.appendChild(F("div","msg feed-truncated",`Showing the most recent ${Y} entries — older history via \\`mesh log --all\\`.`));let R=z.filter((D)=>Q||!o$(D.submission.performative));if(R.length===0)j.appendChild(F("div","empty","No activity yet."));else for(let D of R)j.appendChild(r$(D));if(O)j.scrollTop=j.scrollHeight}function G(O){if(Z.has(O.seq))return!1;Z.add(O.seq);let R=!0;if(z.length===0||O.seq>=z[z.length-1].seq)z.push(O);else{let D=z.length-1;while(D>0&&z[D-1].seq>O.seq)D--;z.splice(D,0,O),R=!1}if(z.length>Y){let D=z.splice(0,z.length-Y);for(let L of D)Z.delete(L.seq);U=!0,R=!1}return R}function C(O,R){if(!R){T();return}if(!Q&&o$(O.submission.performative))return;let D=K(),L=j.querySelector(".empty");if(L)L.remove();if(j.appendChild(r$(O)),D)j.scrollTop=j.scrollHeight}q.addEventListener("change",()=>{Q=q.checked,T()});let M=new AbortController;return(async()=>{try{let O=-1,R=-1,D=!0;for(let L=0;L<d$/U$;L++){let f=await J.getEntries({since:O,limit:U$});for(let c of f.entries)G(c);if(f.entries.length>0)R=f.entries[f.entries.length-1].seq,O=R;if(f.entries.length<U$){D=!1;break}}if(D)U=!0;T();for await(let L of J.follow(R,M.signal))if(L.type==="entry")C(L.entry,G(L.entry))}catch{T(),j.appendChild(F("div","msg err","Feed unavailable — reload the page to retry."))}})(),{stop:()=>M.abort()}}var l$="";function JJ($,J,Q,Y){if(Y==="enum"){let Z=document.createElement("select");Z.dataset.target=$;for(let N of Q??[]){let X=document.createElement("option");X.value=N,X.textContent=N,Z.appendChild(X)}return Z}let z=document.createElement("input");return z.dataset.target=$,z.type=Y==="number"?"number":"text",z.placeholder=J,z}function j$($,J,Q){if(E($),Q){$.appendChild(F("div","msg composer-hint","read-only — run `mesh open` locally to chat"));return}let Y=F("div","msg err composer-error","");Y.style.display="none";function z(U){Y.textContent=U,Y.style.display=""}function Z(){Y.style.display="none"}let N=document.createElement("select");N.className="composer-select";let X=document.createElement("option");X.value=l$,X.textContent="Message",N.appendChild(X);for(let U of H0){let T=document.createElement("option");T.value=U.performative,T.textContent=U.label,T.title=U.hint,N.appendChild(T)}let q=V("div","composer-form");function j(){E(q);let U=V("div","composer-msg-row"),T=document.createElement("input");T.type="text",T.placeholder="Message the room…",T.className="composer-msg-input",U.appendChild(T),q.appendChild(U),T.addEventListener("keydown",(G)=>{if(G.key!=="Enter"||T.disabled)return;let C=T.value.trim();if(!C)return;Z(),T.disabled=!0,J.postEntry({performative:"request",body:C}).then((M)=>{if(!M.ok)z(`post failed: [${M.error}] ${M.detail}`);else T.value=""}).catch((M)=>{z(`post failed: ${M instanceof Error?M.message:String(M)}`)}).finally(()=>{T.disabled=!1,T.focus()})})}function K(U){E(q);let T=[];for(let C of U.fields){let M=V("div","composer-field"),O=F("label",null,C.label+(C.required?" *":"")),R=JJ(C.target,C.sample,C.options,C.type);T.push(R),M.appendChild(O),M.appendChild(R),q.appendChild(M)}let G=F("button","link","Send");q.appendChild(G),G.addEventListener("click",()=>{if(G.disabled)return;Z();let C={};for(let O of T)C[O.dataset.target??""]=O.value;let M=X$(U,C);if(!M.ok){z(M.detail);return}G.disabled=!0,J.postEntry(M.input).then((O)=>{if(!O.ok)z(`post failed: [${O.error}] ${O.detail}`);else for(let R of T)R.value=""}).catch((O)=>{z(`post failed: ${O instanceof Error?O.message:String(O)}`)}).finally(()=>{G.disabled=!1})})}N.addEventListener("change",()=>{if(Z(),N.value===l$){j();return}let U=H0.find((T)=>T.performative===N.value);if(U)K(U)}),$.appendChild(N),$.appendChild(q),$.appendChild(Y),j()}var t$=null,q$=!1;class o extends Error{constructor(){super("session ended — run mesh ui again");this.name="SessionEndedError"}}function s$($){t$=$,q$=!1}async function r($,J={}){let Q=new Headers(J.headers);Q.set("X-Mesh-UI","1");let Y=await fetch($,{...J,headers:Q});if(Y.status===401){if(!q$){q$=!0;try{t$?.()}catch{}}throw new o}return Y}var QJ={vacuous:!0,untracked:!0,"room-only":!0,"orphan-base":!0,"local-deleted":!0,"room-deleted-clean":!0,"room-deleted-dirty":!0,adopt:!0,"never-synced":!0,"in-sync":!0,ahead:!0,behind:!0,converged:!0,diverged:!0,gated:!0,ignored:!0},YJ="no local workspace attached to this membership",zJ={"local identity does not match this membership\'s participant":"local identity does not match this membership\'s participant",local_status_scan_failed:"local status scan failed",machine_registry_unavailable:"machine registry unavailable",membership_resolution_failed:"membership resolution failed"},ZJ={remote_status_unavailable:"room status unavailable",remote_tree_unavailable:"room file tree unavailable",remote_leases_unavailable:"room lease list unavailable"};function J0($){return typeof $==="object"&&$!==null&&!Array.isArray($)}function e$($){return $==="remote"||$==="local"||$==="derived"}function a$($){return typeof $==="number"&&Number.isSafeInteger($)&&$>=0}function NJ($){if($===""||$.includes("\\\\")||$.startsWith("/")||/^[a-zA-Z]:/.test($))return!1;return $.split("/").every((J)=>J!==""&&J!=="."&&J!=="..")}function $8($){if(!J0($)||typeof $.registered!=="boolean")return null;if(!$.registered)return{registered:!1};let J=$.pid;if(J!==void 0&&(!Number.isSafeInteger(J)||typeof J!=="number"||J<=0))return null;let Q=$.alive;if(Q!==void 0&&typeof Q!=="boolean")return null;let Y=$.wakeCursorSeq;if(Y!==void 0&&Y!=="none"&&Y!=="unknown"&&!a$(Y))return null;let z=$.pendingWake;if(z!==void 0&&z!==null&&z!=="unknown"&&(!J0(z)||!a$(z.throughSeq)||typeof z.ageMs!=="number"||!Number.isFinite(z.ageMs)||z.ageMs<0))return null;let Z=$.hookState;if(Z!==void 0&&Z!=="idle"&&Z!=="busy"&&Z!=="unknown")return null;let N={registered:!0};if(typeof J==="number")N.pid=J;if(typeof Q==="boolean")N.alive=Q;if(typeof Y==="number"||Y==="none"||Y==="unknown")N.wakeCursorSeq=Y;if(z===null||z==="unknown")N.pendingWake=z;else if(J0(z))N.pendingWake={throughSeq:z.throughSeq,ageMs:z.ageMs};if(Z==="idle"||Z==="busy"||Z==="unknown")N.hookState=Z;return N}function XJ($){if(!Array.isArray($))return null;let J=[];for(let Q of $){if(!J0(Q))return null;let{path:Y,state:z,glyph:Z,detail:N}=Q;if(typeof Y!=="string"||!NJ(Y)||typeof z!=="string"||QJ[z]!==!0||typeof Z!=="string"||N!==void 0&&typeof N!=="string")return null;let X={path:Y,state:z,glyph:Z};if(typeof N==="string")X.detail=N;J.push(X)}return J}function N0($){let J,Q,Y=null;if(J0($)){if(e$($.source))J=$.source;if(typeof $.observedAt==="number"&&Number.isFinite($.observedAt))Q=$.observedAt;let z=$.data;if(J0(z))Y=$8(z.daemon)}return{...J===void 0?{}:{source:J},...Q===void 0?{}:{observedAt:Q},availability:"invalid",data:Y===null?null:{fs:null,daemon:Y}}}function x0($){if(!J0($))return N0($);let{source:J,observedAt:Q,availability:Y,error:z}=$;if(!e$(J)||typeof Q!=="number"||!Number.isFinite(Q)||Y!=="ok"&&Y!=="failed"&&Y!=="unavailable"||z!==void 0&&typeof z!=="string")return N0($);let Z=$.data;if(Z===null){if(Y==="ok")return N0($);return{source:J,observedAt:Q,availability:Y,...typeof z==="string"?{error:z}:{},data:null}}if(!J0(Z))return N0($);let N=$8(Z.daemon);if(N===null)return N0($);if(Y==="ok"){let X=XJ(Z.fs);if(X===null)return N0($);return{source:J,observedAt:Q,availability:Y,...typeof z==="string"?{error:z}:{},data:{fs:X,daemon:N}}}if(Z.fs!==null)return N0($);return{source:J,observedAt:Q,availability:Y,...typeof z==="string"?{error:z}:{},data:{fs:null,daemon:N}}}function UJ($,J){let Q=J.source??"local";if(J.availability==="loading"){$.appendChild(F("p","source-label",`${Q} · loading`));return}let Y=J.observedAt;if(Y===void 0){$.appendChild(F("p","source-label",`${Q} · observation time unknown`));return}let z=i(Y)||"observation time unknown",Z=F("p","source-label",`${Q} · ${z}`);Z.title=v(Y),$.appendChild(Z)}function g0($){let J=F("p","msg err",$);return J.setAttribute("role","alert"),J}function k0($,J,Q){let Y=V("div","local-card-row");Y.append(F("dt",null,J),F("dd",null,Q)),$.appendChild(Y)}function KJ($){let J=V("section","local-card daemon-card");if(J.appendChild(F("h3",null,"Daemon")),!$.registered)return J.appendChild(F("p","local-card-row","no daemon registered")),J;let Q=document.createElement("dl");k0(Q,"pid",$.pid===void 0?"unknown":String($.pid)),k0(Q,"liveness",$.alive===void 0?"unknown":$.alive?"running":"not running"),k0(Q,"wake cursor",$.wakeCursorSeq===void 0?"unknown":String($.wakeCursorSeq));let Y="unknown";if($.pendingWake===null)Y="none";else if($.pendingWake==="unknown")Y="unknown";else if($.pendingWake!==void 0)Y=`through seq ${$.pendingWake.throughSeq}, ${Math.round($.pendingWake.ageMs/1000)}s ago`;return k0(Q,"pending wake",Y),k0(Q,"hook state",$.hookState??"unknown"),J.appendChild(Q),J}function jJ($,J){let Q=J==="remote"?"room scan failed":"local status scan failed";if($===void 0)return Q;return zJ[$]??ZJ[$]??Q}function qJ($){let J=$.source??"local",Q=jJ($.error,J);return J==="remote"?`Room scan failed — ${Q}. Check room access, then reselect this room to retry.`:`Local workspace scan failed — ${Q}. Check the workspace attachment and room access, then reselect this room to retry.`}function FJ($){if($===YJ)return"No local workspace attached — run mesh attach from the workspace, then reselect this room.";if($==="local_workspace_unavailable")return"Attached workspace cannot be accessed — verify or re-attach the workspace, then reselect this room.";return"Local workspace status unavailable — verify the workspace attachment, then reselect this room."}function _0($,J){if(E($),$.appendChild(F("h2","pane-heading","Local workspace")),UJ($,J),J.availability==="loading"){$.appendChild(F("p","msg","Loading local workspace status — choose another room if this room is unavailable."));return}if(J.availability==="invalid")$.appendChild(g0("Invalid local status response — reselect this room to retry, or run mesh ui again."));else if(J.availability==="unavailable")$.appendChild(g0(FJ(J.error)));else if(J.availability==="failed")$.appendChild(g0(qJ(J)));else if(J.data===null||J.data.fs===null)$.appendChild(g0("Local workspace status unavailable — reselect this room to retry, or run mesh ui again."));else if(J.data.fs.length===0)$.appendChild(F("p","msg","Workspace clean — no differing paths"));else{let Q=V("ul","fs-status-table");Q.setAttribute("aria-label","Local workspace differences");for(let Y of J.data.fs){let z=V("li","status-row");if(z.appendChild(F("span","glyph",Y.glyph)),z.appendChild(F("span","path",Y.path)),Y.detail!==void 0)z.appendChild(F("span","detail",Y.detail));Q.appendChild(z)}$.appendChild(Q)}if(J.data!==null)$.appendChild(KJ(J.data.daemon))}function l($){return typeof $==="object"&&$!==null&&!Array.isArray($)}function Q8($){return typeof $==="number"&&Number.isFinite($)}function Q0($){return typeof $==="number"&&Number.isSafeInteger($)}function TJ($){return Array.isArray($)&&$.every((J)=>typeof J==="string")}function X0($,J){return $[J]===void 0||typeof $[J]==="string"}function GJ($,J){return $[J]===void 0||Q8($[J])}function J8($,J){return $[J]===void 0||TJ($[J])}function OJ($){if(!l($))return!1;let{source:J,availability:Q}=$;return(J==="remote"||J==="local"||J==="derived")&&Q8($.observedAt)&&(Q==="ok"||Q==="failed"||Q==="unavailable")&&X0($,"error")&&(Q==="ok"?$.data!==null:$.data===null)}function DJ($){if(!l($))return!1;return $.v===1&&typeof $.room==="string"&&typeof $.sender==="string"&&typeof $.performative==="string"&&z$($.performative)&&typeof $.client_ts==="string"&&typeof $.nonce==="string"&&X0($,"task_ref")&&X0($,"thread")&&X0($,"contingent_on")&&($.reply_to===void 0||Q0($.reply_to))&&J8($,"mentions")&&J8($,"artifacts")&&X0($,"body")&&X0($,"sig")}function Y8($){if(!l($))return!1;return Q0($.seq)&&typeof $.prev_hash==="string"&&typeof $.room_ts==="string"&&DJ($.submission)&&typeof $.entry_hash==="string"}function WJ($){return l($)&&Q0($.seq)&&typeof $.entry_hash==="string"}function CJ($){if(!l($))return!1;let{entries:J,notifies:Q}=$;return Array.isArray(J)&&J.every(Y8)&&Array.isArray(Q)&&Q.every((Y)=>l(Y)&&typeof Y.watch_id==="string"&&Q0(Y.entry_seq))&&WJ($.head)&&($.read_cursor===void 0||Q0($.read_cursor))&&($.notifies_truncated===void 0||typeof $.notifies_truncated==="boolean")}function kJ($){if(!l($)||typeof $.ok!=="boolean")return!1;if($.ok===!0)return Q0($.seq)&&typeof $.entry_hash==="string";return typeof $.error==="string"&&typeof $.detail==="string"&&Q0($.status)&&X0($,"hint")&&GJ($,"retry_after_s")}function MJ($){if(!l($)||typeof $.type!=="string")return!1;switch($.type){case"entry":return Y8($.entry);case"notify":return typeof $.watch_id==="string"&&Q0($.entry_seq);case"crdt":return typeof $.path==="string"&&typeof $.update==="string";case"ping":case"pong":return!0;default:return!1}}function S0($){return Error(`invalid broker response for ${$}`)}async function z8($,J){try{return await $.json()}catch{throw S0(J)}}async function VJ($,J){let Q=await r($),Y=await z8(Q,J);if(!OJ(Y))throw S0(J);if(Y.availability!=="ok")throw Error(Y.error??`${J} unavailable`);if(!Q.ok)throw Error(`${J} failed with HTTP ${Q.status}`);return Y.data}function RJ($,J){let Q=new URLSearchParams;if(J.since!==void 0){if(!Number.isSafeInteger(J.since)||J.since<-1)throw Error("invalid entries since cursor");Q.set("since",String(J.since))}if(J.limit!==void 0){if(!Number.isSafeInteger(J.limit)||J.limit<1)throw Error("invalid entries limit");Q.set("limit",String(J.limit))}let Y=Q.toString();return`/api/memberships/${encodeURIComponent($)}/entries${Y.length>0?`?${Y}`:""}`}function PJ($,J){let Q=new URLSearchParams;if(J!==void 0){if(!Number.isSafeInteger(J)||J<-1)throw Error("invalid events since cursor");Q.set("since",String(J))}let Y=Q.toString();return`/api/memberships/${encodeURIComponent($)}/events${Y.length>0?`?${Y}`:""}`}function LJ($){try{let J=JSON.parse($);return l(J)&&typeof J.error==="string"?J.error:null}catch{return null}}function IJ($){return $.replaceAll("_"," ")}function BJ($,J,Q){let Y=[],z=[],Z=null,N=!1,X=!1,q=!1,j=(G)=>{if(q)return;q=!0;try{Q?.(G)}catch{}},K=()=>{if(N)return;if(N=!0,J?.removeEventListener("abort",K),Z!==null)Z.onmessage=null,Z.onerror=null,Z.close();Y.length=0;for(let G of z.splice(0))G({done:!0,value:void 0})},U=()=>{if(X)return;X=!0,K(),(async()=>{try{await r("/api/inventory"),j("Feed disconnected — reload the page or choose the room again to retry.")}catch(G){if(G instanceof o)return;j("Feed disconnected and the session could not be checked — reload the page to retry.")}})()},T={next(){let G=Y.shift();if(G!==void 0)return Promise.resolve({done:!1,value:G});if(N)return Promise.resolve({done:!0,value:void 0});let{promise:C,resolve:M}=Promise.withResolvers();return z.push(M),C},return(){return K(),Promise.resolve({done:!0,value:void 0})},throw(G){return K(),Promise.reject(G)},[Symbol.asyncIterator](){return this}};if(J?.aborted)return N=!0,T;J?.addEventListener("abort",K,{once:!0});try{Z=new EventSource($)}catch{return K(),j("Feed unavailable — reload the page or choose the room again to retry."),T}return Z.onmessage=(G)=>{if(N)return;let C;try{C=JSON.parse(G.data)}catch{j("Feed disconnected after an invalid event — reload the page to retry."),K();return}if(!MJ(C)){j("Feed disconnected after an invalid event — reload the page to retry."),K();return}let M=z.shift();if(M!==void 0)M({done:!1,value:C});else Y.push(C)},Z.onerror=(G)=>{if(N)return;let C=Reflect.get(G,"data");if(typeof C==="string"){let M=LJ(C)??"upstream error";j(`Feed disconnected — ${IJ(M)}. Reload the page to retry.`),K();return}if(Z?.readyState===EventSource.CLOSED)U()},T}function Z8($,J,Q,Y){return{roomId:J,async getEntries(z){let N=await VJ(RJ($,z),"room entries");if(!CJ(N))throw S0("room entries");return N},follow(z,Z){return BJ(PJ($,z),Z,Y)},async postEntry(z){let N=await r(`/api/memberships/${encodeURIComponent($)}/post`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(z)}),X=await z8(N,"room post");if(!kJ(X))throw S0("room post");return X}}}function M0($){return typeof $==="object"&&$!==null&&!Array.isArray($)}function EJ($){if(!M0($))return!1;let{source:J,availability:Q}=$;return(J==="remote"||J==="local"||J==="derived")&&typeof $.observedAt==="number"&&Number.isFinite($.observedAt)&&(Q==="ok"||Q==="failed"||Q==="unavailable")&&($.error===void 0||typeof $.error==="string")&&(Q==="ok"?$.data!==null:$.data===null)}function fJ($){if(!M0($)||!Array.isArray($.tree))return null;let J=[];for(let Q of $.tree){if(!M0(Q)||typeof Q.path!=="string"||typeof Q.size!=="number"||!Number.isFinite(Q.size)||Q.size<0||Q.content_hash!==void 0&&typeof Q.content_hash!=="string"||Q.tip_ts!==void 0&&typeof Q.tip_ts!=="string"||Q.lease_holder!==void 0&&typeof Q.lease_holder!=="string")return null;let Y={path:Q.path,size:Q.size};if(typeof Q.content_hash==="string")Y.content_hash=Q.content_hash;if(typeof Q.tip_ts==="string")Y.tip_ts=Q.tip_ts;if(typeof Q.lease_holder==="string")Y.lease_holder=Q.lease_holder;J.push(Y)}return J}function HJ($){if(!M0($)||!Array.isArray($.roster))return null;let J=[];for(let Q of $.roster){if(!M0(Q)||typeof Q.participant_id!=="string"||typeof Q.pubkey!=="string"||!Array.isArray(Q.roles)||!Q.roles.every((Y)=>typeof Y==="string")||Q.specialties!==void 0&&(!Array.isArray(Q.specialties)||!Q.specialties.every((Y)=>typeof Y==="string")))return null;J.push({participantId:Q.participant_id,pubkey:Q.pubkey,roles:[...Q.roles],specialties:Q.specialties===void 0?[]:[...Q.specialties]})}return{roster:J}}async function N8($,J,Q){let Y=await r($,{signal:Q}),z;try{z=await Y.json()}catch{throw Error(`invalid broker response for ${J}`)}if(!EJ(z))throw Error(`invalid broker response for ${J}`);if(!Y.ok&&z.availability==="ok")throw Error(`${J} failed with HTTP ${Y.status}`);return z}var gJ=0;function xJ($){let J=$.querySelector(".composer-select");if(J===null)return;let Q=`manager-composer-${gJ++}`;J.id=`${Q}-type`;let Y=F("label","composer-control-label","Message type");Y.htmlFor=J.id,J.before(Y);let z=()=>{let Z=$.querySelector(".composer-msg-input");if(Z!==null){Z.id=`${Q}-message`;let X=F("label","composer-control-label","Message");X.htmlFor=Z.id,Z.before(X);return}$.querySelectorAll(".composer-field").forEach((X,q)=>{let j=X.querySelector("label"),K=X.querySelector("input, select");if(j===null||K===null)return;K.id=`${Q}-field-${q}`,j.htmlFor=K.id,j.classList.add("composer-control-label")})};J.addEventListener("change",z),z()}function X8($){E($),$.appendChild(F("h2","pane-heading","Room"));let J=F("div","source-label","room · not selected"),Q=V("section","files-pane"),Y=V("section","conversation-pane");Q.textContent="Choose a room from the Rooms pane to inspect its files.",Y.textContent="Choose a room to load its conversation and composer.",$.append(J,Q,Y);let z=0,Z=null,N=null,X=()=>{z+=1,Z?.abort(),Z=null,N?.stop(),N=null,E(Q),E(Y)},q=(K)=>{J.textContent="room · unavailable",J.title="",Q.textContent=`Room unavailable — ${K}. Reload the page or choose another room to retry.`,Y.textContent="Conversation unavailable — choose another room or reload the page to retry."};async function j(K,U,T){X();let G=z,C=new AbortController;Z=C,J.textContent="room · loading",J.title="",Q.textContent="Loading room files — choose another room if this room is unavailable.",Y.textContent="Loading conversation — it will appear when the room responds.";let M,O;try{[M,O]=await Promise.all([N8(`/api/memberships/${encodeURIComponent(K)}/tree`,"room tree",C.signal),N8(`/api/memberships/${encodeURIComponent(K)}/state`,"room state",C.signal)])}catch(y){if(G!==z||C.signal.aborted||y instanceof o)return;q(y instanceof Error?y.message:"room request failed");return}if(G!==z||C.signal.aborted)return;if(Z=null,M.availability!=="ok"||O.availability!=="ok"){q(M.error??O.error??"room request failed");return}let R=fJ(M.data),D=HJ(O.data);if(R===null||D===null){q("invalid broker response for room data");return}let L=Math.max(M.observedAt,O.observedAt);J.textContent=`room · ${i(L)}`,J.title=v(L);let f=D.roster.find((y)=>y.participantId===T),c=f===void 0?null:{participant_id:f.participantId,pubkey:f.pubkey,roles:f.roles,specialties:f.specialties};c0(Q,U,{room:U,mode:"member",public_share:!1,tree_visible:!0,identity:c,tree:R}),E(Y);let H=V("div","feed-pane"),g=V("div","composer-pane");Y.append(H,g);let m=Z8(K,U,T,(y)=>{if(G!==z)return;Y.appendChild(F("div","feed-failure",y))});N=K$(H,m),j$(g,m,!1),xJ(g)}return{switchTo:j,stop(){X(),J.textContent="room · stopped",J.title=""}}}function U8($,J,Q){E($),$.appendChild(F("h2","pane-heading","Rooms"));let Y=new Map,z=[];function Z(X){if(X===void 0)return;for(let q of z)q.tabIndex=q===X?0:-1}function N(X){let q=z[(X+z.length)%z.length];if(q===void 0)return;Z(q),q.focus()}for(let X of J){if(X.memberships.length===0)continue;let q=V("div","sidebar-group");q.setAttribute("role","group"),q.setAttribute("aria-label",`Profile ${X.label}, identity ${X.identityId}`);let j=V("h3","sidebar-group-label");j.appendChild(F("span","sidebar-profile-name",`${G0(X.pubkey)} ${X.label}`)),j.appendChild(F("span","sidebar-profile-identity",X.identityId)),q.appendChild(j);for(let K of X.memberships){let U=V("button","sidebar-row");U.type="button",U.dataset.mid=K.membershipId,U.tabIndex=z.length===0?0:-1,U.setAttribute("aria-label",`${K.roomId} at ${K.origin} — profile ${X.label}, identity ${X.identityId}`);let T=V("span","sidebar-room-context");T.appendChild(F("span","sidebar-room-id",K.roomId)),T.appendChild(F("span","sidebar-room-origin",K.origin)),U.appendChild(T),U.addEventListener("click",()=>{Z(U),Q(K.membershipId)}),U.addEventListener("keydown",(G)=>{let C=z.indexOf(U);if(G.key==="ArrowDown")G.preventDefault(),N(C+1);else if(G.key==="ArrowUp")G.preventDefault(),N(C-1);else if(G.key==="Home")G.preventDefault(),N(0);else if(G.key==="End")G.preventDefault(),N(z.length-1)}),q.appendChild(U),Y.set(K.membershipId,U),z.push(U)}$.appendChild(q)}if(z.length===0)$.appendChild(F("div","empty-state","No rooms yet — run mesh keygen + mesh join, then reload"));return{setActive(X){Z(Y.get(X)??z[0]);for(let[q,j]of Y)if(q===X)j.setAttribute("aria-current","true");else j.removeAttribute("aria-current")}}}function _J(){let $=location.hash;if($.length===0)return{kind:"none"};history.replaceState(null,"",location.pathname+location.search);let J=/^#s=(.*)$/.exec($);if(J===null)return{kind:"none"};let Q=J[1];if(Q.length===0)return{kind:"invalid"};try{let Y=decodeURIComponent(Q);return Y.length===0?{kind:"invalid"}:{kind:"token",value:Y}}catch{return{kind:"invalid"}}}var F$=_J();function O$($){let J=document.getElementById($);if(J===null)throw Error(`manager shell is missing #${$}`);return J}var U0=O$("identity-context"),y0=O$("room-context"),A=O$("app");function T$($){return typeof $==="object"&&$!==null&&!Array.isArray($)}function SJ($){if(!T$($))return!1;let{source:J,availability:Q}=$;return(J==="remote"||J==="local"||J==="derived")&&typeof $.observedAt==="number"&&Number.isFinite($.observedAt)&&(Q==="ok"||Q==="failed"||Q==="unavailable")&&($.error===void 0||typeof $.error==="string")&&(Q==="ok"?$.data!==null:$.data===null)}function AJ($){if(!Array.isArray($))return null;let J=[];for(let Q of $){if(!T$(Q)||typeof Q.label!=="string"||typeof Q.identityId!=="string"||typeof Q.pubkey!=="string"||!Array.isArray(Q.memberships))return null;let Y=[];for(let z of Q.memberships){if(!T$(z)||typeof z.membershipId!=="string"||typeof z.roomId!=="string"||typeof z.origin!=="string"||typeof z.active!=="boolean"||z.workspaceRoot!==void 0&&typeof z.workspaceRoot!=="string")return null;Y.push({membershipId:z.membershipId,roomId:z.roomId,origin:z.origin,active:z.active,...typeof z.workspaceRoot==="string"?{workspaceRoot:z.workspaceRoot}:{}})}J.push({label:Q.label,identityId:Q.identityId,pubkey:Q.pubkey,memberships:Y})}return J}function A0($,J){return{mid:J.membershipId,roomId:J.roomId,origin:J.origin,participantId:$.identityId,profileLabel:$.label}}function yJ($,J){let Q=J===null?void 0:$.find((Y)=>Y.label===J||Y.identityId===J);if(Q!==void 0){let Y=Q.memberships.find((z)=>z.active)??Q.memberships[0];if(Y!==void 0)return A0(Q,Y)}for(let Y of $){if(Y===Q)continue;let z=Y.memberships.find((Z)=>Z.active);if(z!==void 0)return A0(Y,z)}for(let Y of $){let z=Y.memberships[0];if(z!==void 0)return A0(Y,z)}return null}var V0=null,j0=null,K0=!1;function G$(){if(K0)return;K0=!0,j0?.(),j0=null,V0?.stop(),V0=null,E(U0),E(y0),A.className="",A.setAttribute("role","alert"),A.textContent="Session ended — run mesh ui again."}s$(G$);function mJ($){if(K0)return;j0?.(),j0=null,V0?.stop(),V0=null,E(U0),E(y0),A.className="",A.setAttribute("role","alert"),A.textContent=`Room inventory unavailable — ${$}. Reload the page to retry, or run mesh ui again.`}function wJ(){j0?.(),j0=null,E(U0),E(y0),A.className="empty-state",A.removeAttribute("role"),A.textContent="No rooms yet — run mesh keygen, then mesh join, then reload this page."}async function pJ($){try{let J=new Headers({"Content-Type":"application/json"});return J.set("X-Mesh-UI","1"),(await fetch("/api/session",{method:"POST",headers:J,body:JSON.stringify({token:$})})).ok}catch{return!1}}async function cJ(){let $=await r("/api/inventory"),J;try{J=await $.json()}catch{throw Error("invalid broker response for room inventory")}if(!SJ(J))throw Error("invalid broker response for room inventory");if(J.availability!=="ok")throw Error(J.error??"room inventory scan failed");if(!$.ok)throw Error(`room inventory failed with HTTP ${$.status}`);let Q=AJ(J.data);if(Q===null)throw Error("invalid broker response for room inventory");return Q}async function bJ(){if(A.className="loading-state",A.removeAttribute("role"),A.textContent="Loading room inventory — please wait.",F$.kind==="invalid"){G$();return}if(F$.kind==="token"&&!await pJ(F$.value)){G$();return}let $;try{$=await cJ()}catch(O){if(O instanceof o)return;mJ(O instanceof Error?O.message:"room inventory request failed");return}if(K0)return;let J=new URLSearchParams(location.search).get("focus"),Q=yJ($,J);if(Q===null){wJ();return}let Y=J===null?void 0:$.find((O)=>O.label===J||O.identityId===J),z=Y?.memberships.some((O)=>O.membershipId===Q.mid)===!0?Y.label:void 0;E(A),A.className="layout-manager",A.removeAttribute("role");let Z=document.createElement("nav");Z.className="rooms-pane",Z.setAttribute("aria-label","Rooms");let N=document.createElement("main");N.className="room-pane";let X=document.createElement("aside");X.className="local-pane",X.setAttribute("aria-label","Local workspace"),A.append(Z,N,X);let q=X8(N);V0=q;let j=new Map;for(let O of $)for(let R of O.memberships)j.set(R.membershipId,A0(O,R));let K=0,U=null,T=()=>{K+=1,U?.abort(),U=null};j0=T;let G=(O)=>{T();let R=K,D=new AbortController;U=D,_0(X,{availability:"loading",source:"local",data:null}),(async()=>{try{let L=await r(`/api/memberships/${encodeURIComponent(O)}/status`,{signal:D.signal}),f;try{f=await L.json()}catch{f=null}if(R!==K||D.signal.aborted||K0)return;_0(X,L.ok?x0(f):x0(null))}catch(L){if(R!==K||D.signal.aborted||K0||L instanceof o)return;_0(X,x0(null))}finally{if(R===K&&U===D)U=null}})()},C=null,M=(O,R)=>{let D=j.get(O);if(D===void 0||K0)return;if(C?.setActive(O),E(U0),R!==void 0)U0.appendChild(F("span","label",`Profile: ${R}`));U0.appendChild(F("span","label","Acting as")),U0.appendChild(document.createTextNode(` ${D.profileLabel} · ${D.participantId}`)),y0.textContent=`${D.roomId} · ${D.origin}`,q.switchTo(O,D.roomId,D.participantId),G(O)};C=U8(Z,$,M),M(Q.mid,z)}bJ();export{yJ as pickInitialMembership};\n';
+var UI_APP_JS_HASH = "60bd5512a7df374b4f8245fba23c87a3e535d83c4733fe645c93cf0b6e730abd";
+
+// ../web-core/src/styles.ts
+var SHARED_UI_CSS = `
+  :root {
+    --bg: #0b0d10; --panel: #14171c; --panel2: #1b1f26; --line: #262b33;
+    --fg: #e6e9ee; --muted: #8b95a3; --accent: #58a6ff;
+    --good: #3fb950; --warn: #d29922; --lock: #7d8590;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px 18px; margin-bottom: 18px;
+  }
+  .idrow { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .avatar {
+    width: 40px; height: 40px; border-radius: 8px; flex: none;
+    display: grid; place-items: center; font-weight: 700; font-size: 18px;
+    background: var(--panel2); color: var(--accent); border: 1px solid var(--line);
+  }
+  .idmain { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .idmain .name { font-weight: 600; font-family: var(--mono); }
+  .idmain .sub { color: var(--muted); font-size: 12.5px; }
+  .badges { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
+  .badge {
+    font-size: 11px; font-family: var(--mono); padding: 2px 8px; border-radius: 999px;
+    background: var(--panel2); border: 1px solid var(--line); color: var(--muted);
+  }
+  .badge.member { color: var(--good); border-color: #1c3b24; }
+  .badge.public { color: var(--warn); border-color: #3d3211; }
+  .pubkey { font-family: var(--mono); font-size: 11.5px; color: var(--muted); word-break: break-all; }
+  .toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin: 6px 2px 6px; }
+  .toolbar .count { color: var(--muted); font-size: 12.5px; }
+  .seg { display: inline-flex; align-items: center; gap: 3px; }
+  .seg-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .5px; margin-right: 2px; }
+  .seg-btn {
+    background: var(--panel2); border: 1px solid var(--line); color: var(--muted);
+    font: 11.5px var(--mono); padding: 2px 9px; border-radius: 6px; cursor: pointer;
+  }
+  .seg-btn:hover { color: var(--fg); }
+  .seg-btn.active { color: var(--accent); border-color: var(--accent); }
+  .spacer { margin-left: auto; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--muted); font: 11.5px var(--mono); margin: 0 2px 10px; }
+  button.link {
+    background: none; border: none; color: var(--accent); cursor: pointer;
+    font-size: 12.5px; padding: 2px 4px;
+  }
+  button.link:hover { text-decoration: underline; }
+  .files-pane { min-width: 0; } /* shared: both room-view-page.ts's 2-col grid AND the manager's 3-col grid wrap renderFilesPane's output in this class */
+  .tree { font-family: var(--mono); font-size: 13px; }
+  .row {
+    display: flex; align-items: center; gap: 8px; padding: 3px 6px; border-radius: 6px;
+    white-space: nowrap;
+  }
+  .row:hover { background: var(--panel2); }
+  .row .twist { width: 12px; color: var(--muted); flex: none; text-align: center; user-select: none; }
+  .row.dir { cursor: pointer; }
+  .row.dir .nm { color: var(--fg); font-weight: 600; }
+  .row.file .nm { color: #c9d1d9; }
+  .row .icon { flex: none; opacity: .8; }
+  .row .nm { overflow: hidden; text-overflow: ellipsis; }
+  .row .meta { margin-left: auto; display: flex; gap: 12px; align-items: center; color: var(--muted); font-size: 11.5px; }
+  .row .meta .cnt, .row .meta .sz { white-space: nowrap; }
+  .row .meta .lease { color: var(--warn); }
+  .row .meta .lock { color: var(--lock); }
+  .children { margin-left: 16px; border-left: 1px solid var(--line); padding-left: 2px; }
+  .children.collapsed { display: none; }
+  .list { font-family: var(--mono); font-size: 13px; }
+  .list .row .nm.path { color: #c9d1d9; }
+  .list .row .icon { margin-right: 2px; }
+  .empty, .msg { color: var(--muted); padding: 20px 4px; }
+  .msg.err { color: #f85149; }
+  a { color: var(--accent); }
+  .feed-pane { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  .feed-toolbar {
+    display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+    border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted);
+  }
+  .feed-toggle { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+  .feed { flex: 1 1 auto; overflow-y: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 10px; }
+  .feed-row { font-size: 13px; }
+  .feed-row-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-family: var(--mono); font-size: 11.5px; }
+  .feed-seq { color: var(--muted); }
+  .feed-sender { color: var(--fg); font-weight: 600; }
+  .feed-perf { color: var(--accent); }
+  .feed-chip {
+    background: var(--panel2); border: 1px solid var(--line); border-radius: 999px;
+    padding: 1px 7px; color: var(--muted); font-size: 10.5px;
+  }
+  .feed-time { margin-left: auto; color: var(--muted); }
+  .feed-body { margin-top: 2px; white-space: pre-wrap; word-break: break-word; }
+  .composer-pane { border-top: 1px solid var(--line); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+  .composer-select {
+    background: var(--panel2); border: 1px solid var(--line); color: var(--fg);
+    border-radius: 6px; padding: 4px 8px; font-size: 16px;
+  }
+  .composer-select:hover { border-color: var(--accent); }
+  .composer-select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .composer-form { display: flex; flex-direction: column; gap: 6px; }
+  .composer-msg-row { display: flex; }
+  .composer-msg-input, .composer-field input, .composer-field select {
+    flex: 1; background: var(--panel2); border: 1px solid var(--line); color: var(--fg);
+    border-radius: 6px; padding: 6px 9px; font-size: 16px;
+  }
+  .composer-msg-input:hover, .composer-field input:hover, .composer-field select:hover { border-color: var(--accent); }
+  .composer-msg-input:focus-visible, .composer-field input:focus-visible, .composer-field select:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 1px;
+  }
+  .composer-field { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
+  .composer-hint { padding: 8px 2px; }
+  .composer-error { padding: 4px 2px; font-size: 12.5px; }
+`;
+
+// src/ui/shell-page.ts
+var UI_SHELL_CSP = "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'";
+var MANAGER_UI_CSS = `${SHARED_UI_CSS}
+  :root { --mono: "SF Mono", Menlo, Consolas, monospace; }
+  body { font-size: 16px; }
+
+  .topbar {
+    display: flex; align-items: center; gap: 14px; min-height: 49px; padding: 10px 16px;
+    border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  .topbar .brand { font-weight: 700; letter-spacing: .5px; white-space: nowrap; }
+  .topbar .brand b { color: var(--accent); }
+  .topbar .identity { color: var(--fg); font-family: var(--mono); font-size: 13px; }
+  .topbar .identity .label { color: var(--muted); margin-right: 4px; }
+  .topbar .room-context {
+    margin-left: auto; color: var(--muted); font-family: var(--mono); font-size: 12.5px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  #app.layout-manager {
+    display: grid;
+    grid-template-columns: 240px minmax(0, 1fr) 320px;
+    grid-template-rows: 1fr;
+    height: calc(100vh - 49px);
+  }
+  #app.loading-state { padding: 24px 16px; color: var(--muted); font-family: var(--mono); }
+  .pane-heading {
+    font-size: 12px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted);
+    padding: 12px 14px 8px; border-bottom: 1px solid var(--line);
+  }
+  h2.pane-heading { margin: 0; font-weight: 600; line-height: 1.5; }
+  .rooms-pane, .local-pane { overflow-y: auto; min-height: 0; }
+  .rooms-pane { border-right: 1px solid var(--line); }
+  .room-pane {
+    display: flex; flex-direction: column; overflow-y: auto; min-height: 0; min-width: 0;
+  }
+  .local-pane { border-left: 1px solid var(--line); padding: 0 14px 14px; }
+  .conversation-pane { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; }
+  .feed-failure {
+    padding: 8px 12px; color: var(--warn); font-size: 12px; border-top: 1px solid var(--line);
+  }
+
+  .sidebar-group { padding: 12px 14px 4px; }
+  .sidebar-group + .sidebar-group { border-top: 1px solid var(--line); margin-top: 8px; }
+  .sidebar-group-label {
+    display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0 0 8px;
+    font-family: var(--mono);
+  }
+  .sidebar-profile-name { color: var(--fg); font-size: 13px; font-weight: 700; }
+  .sidebar-profile-identity { color: var(--muted); font-size: 11px; font-weight: 400; }
+  .sidebar-row {
+    display: flex; align-items: center; width: 100%; min-block-size: 44px; min-width: 0;
+    padding: 4px 8px; border: none; background: none; color: var(--fg);
+    font: 13px var(--mono); text-align: left; cursor: pointer;
+  }
+  .sidebar-room-context { display: flex; flex: 1 1 auto; flex-direction: column; gap: 2px; min-width: 0; }
+  .sidebar-room-id, .sidebar-room-origin {
+    display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .sidebar-room-id { color: currentColor; font-weight: 600; }
+  .sidebar-room-origin { color: var(--muted); font-size: 11px; font-weight: 400; }
+  .sidebar-row:hover { background: var(--panel2); }
+  .sidebar-row[aria-current="true"] { background: var(--panel2); color: var(--accent); font-weight: 600; }
+  .sidebar-row:focus-visible, button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
+  .sidebar-row:focus-visible { outline-offset: -2px; }
+
+
+  .room-pane .toolbar .seg-btn,
+  .room-pane .toolbar button.link,
+  .room-pane .feed-toggle,
+  .room-pane .composer-select,
+  .room-pane .composer-msg-input,
+  .room-pane .composer-field input,
+  .room-pane .composer-field select,
+  .room-pane .composer-form button.link {
+    min-block-size: 44px; min-inline-size: 44px;
+  }
+  .room-pane .composer-msg-row { flex-direction: column; gap: 4px; }
+  .room-pane .composer-control-label {
+    color: var(--fg); font-size: 13px; font-weight: 600; line-height: 1.4;
+  }
+  .local-card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    padding: 10px 12px; margin: 12px 0; font-size: 12.5px; color: var(--fg);
+  }
+  .local-card h3 {
+    margin: 0 0 6px; font-size: 11px; text-transform: uppercase;
+    letter-spacing: .5px; color: var(--muted);
+  }
+  .daemon-card { margin-top: 0; }
+  .local-card-row { display: flex; gap: 8px; padding: 2px 0; font-family: var(--mono); font-size: 12px; }
+  .local-card dl { margin: 0; }
+  .local-card-row dt { min-width: 92px; color: var(--muted); }
+  .local-card-row dd { margin: 0; overflow-wrap: anywhere; }
+  .source-label { color: var(--muted); font-family: var(--mono); font-size: 11px; padding: 10px 0 4px; }
+  .fs-status-table { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+  .status-row { display: flex; align-items: baseline; gap: 8px; padding: 3px 0; font-family: var(--mono); font-size: 12.5px; }
+  .status-row .glyph { width: 14px; text-align: center; color: var(--muted); flex: none; }
+  .status-row .path { color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .status-row .detail { color: var(--muted); font-size: 11px; }
+
+  .empty-state { color: var(--muted); padding: 20px 14px; font-size: 13px; line-height: 1.6; }
+  .empty-state code { font-family: var(--mono); color: var(--fg); }
+  [role="alert"] { color: #f85149; padding: 10px 14px; font-size: 12.5px; }
+  [aria-live] { position: relative; }
+
+  @media (min-width: 880px) and (max-width: 1279px) {
+    #app.layout-manager {
+      grid-template-columns: 240px minmax(0, 1fr);
+      grid-template-rows: minmax(0, 1fr) 240px;
+    }
+    .local-pane {
+      grid-column: 1 / -1; border-left: none; border-top: 1px solid var(--line);
+    }
+  }
+
+  @media (max-width: 879px) {
+    #app.layout-manager { display: block; height: auto; min-height: calc(100vh - 49px); }
+    .rooms-pane { border-right: none; border-bottom: 1px solid var(--line); }
+    .local-pane { border-left: none; }
+  }
+`;
+var UI_SHELL_HTML = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mesh — local manager</title>
+<style>
+${MANAGER_UI_CSS}
+</style>
+</head>
+<body>
+<header class="topbar"><span class="brand"><b>mesh</b> local</span><span id="identity-context" class="identity"></span><span id="room-context" class="room-context"></span></header>
+<div id="app"></div>
+<script type="module" src="/ui-assets/app.js?v=${UI_APP_JS_HASH}"></script>
+</body>
+</html>`;
+
+// src/ui/server.ts
+function sendJson(res, status, body) {
+  const payload = JSON.stringify(body);
+  res.writeHead(status, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Content-Length": Buffer.byteLength(payload)
+  });
+  res.end(payload);
+}
+function readJsonBody(req) {
+  const { promise, resolve: resolve7, reject } = Promise.withResolvers();
+  const chunks = [];
+  req.on("data", (chunk) => chunks.push(chunk));
+  req.on("end", () => {
+    if (chunks.length === 0) {
+      resolve7({});
+      return;
+    }
+    try {
+      resolve7(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+    } catch (error) {
+      reject(error instanceof Error ? error : new Error(String(error)));
+    }
+  });
+  req.on("error", reject);
+  return promise;
+}
+function isSessionBody(body) {
+  return typeof body === "object" && body !== null && !Array.isArray(body) && "token" in body && typeof body.token === "string";
+}
+async function createBroker(opts) {
+  const router = new Router;
+  const sessions = new SessionStore;
+  router.post("/api/session", async (req, res) => {
+    let body;
+    try {
+      body = await readJsonBody(req);
+    } catch {
+      sendJson(res, 400, { error: "invalid_json_body" });
+      return;
+    }
+    if (!isSessionBody(body)) {
+      sendJson(res, 400, { error: "invalid_json_body" });
+      return;
+    }
+    const cookie = sessions.exchangeLaunchToken(body.token);
+    if (cookie === null) {
+      sendJson(res, 401, { error: "invalid_or_expired_launch_token" });
+      return;
+    }
+    res.setHeader("Set-Cookie", `${SESSION_COOKIE_NAME}=${cookie}; HttpOnly; SameSite=Strict; Path=/`);
+    sendJson(res, 200, { ok: true });
+  });
+  router.get("/api/inventory", (_req, res) => {
+    sendJson(res, 200, buildInventory(opts.registryDir));
+  });
+  const membershipResolver = createMembershipResolver(opts.registryDir);
+  const resolverSeam = { resolveMembershipForTest: membershipResolver.resolve };
+  registerRoomRoutes(router, opts.registryDir, resolverSeam);
+  const roomHub = new RoomHub;
+  const eventsRoute = registerEventsRoute(router, roomHub, opts.registryDir, resolverSeam);
+  registerPostRoute(router, opts.registryDir, resolverSeam);
+  registerStatusRoute(router, opts.registryDir, resolverSeam);
+  router.get("/", (_req, res) => {
+    res.writeHead(200, {
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Security-Policy": UI_SHELL_CSP,
+      "Cache-Control": "no-cache"
+    });
+    res.end(UI_SHELL_HTML);
+  });
+  router.get("/ui-assets/app.js", (req, res) => {
+    const url = new URL(req.url ?? "/", "http://127.0.0.1");
+    const versionMatches = url.searchParams.get("v") === UI_APP_JS_HASH;
+    const etag = `"${UI_APP_JS_HASH}"`;
+    const headers = {
+      "Content-Type": "application/javascript; charset=utf-8",
+      "Cache-Control": versionMatches ? "public, max-age=31536000, immutable" : "no-cache",
+      ETag: etag
+    };
+    if (req.headers["if-none-match"] === etag) {
+      res.writeHead(304, headers);
+      res.end();
+      return;
+    }
+    res.writeHead(200, headers);
+    res.end(UI_APP_JS);
+  });
+  const server = createServer((req, res) => {
+    handleRequest(req, res);
+  });
+  async function handleRequest(req, res) {
+    try {
+      const address2 = server.address();
+      const boundPort = typeof address2 === "object" && address2 !== null ? address2.port : opts.port;
+      const hostCheck = checkHost(req.headers.host ?? null, `127.0.0.1:${boundPort}`);
+      if (!hostCheck.ok) {
+        sendJson(res, hostCheck.status ?? 403, {
+          error: hostCheck.rule,
+          ...hostCheck.hint !== undefined ? { hint: hostCheck.hint } : {}
+        });
+        return;
+      }
+      const url = new URL(req.url ?? "/", `http://127.0.0.1:${boundPort}`);
+      const method = req.method ?? "GET";
+      const match = router.match(method, url.pathname);
+      if (match === null) {
+        sendJson(res, 404, { error: "not_found" });
+        return;
+      }
+      const isSessionRoute = url.pathname === "/api/session";
+      const isApiRoute = url.pathname.startsWith("/api/");
+      if (isApiRoute && !isSessionRoute) {
+        const cookie = extractCookie(req.headers.cookie ?? null, SESSION_COOKIE_NAME);
+        if (!sessions.isValidCookie(cookie)) {
+          sendJson(res, 401, { error: "missing_or_invalid_cookie" });
+          return;
+        }
+      }
+      const stateCheck = checkStateChanging(method, req.headers.origin ?? null, req.headers["x-mesh-ui"] ?? null, `http://127.0.0.1:${boundPort}`);
+      if (!stateCheck.ok) {
+        sendJson(res, stateCheck.status ?? 403, {
+          error: stateCheck.rule,
+          ...stateCheck.hint !== undefined ? { hint: stateCheck.hint } : {}
+        });
+        return;
+      }
+      await match.handler(req, res, match.params);
+    } catch {
+      if (!res.headersSent) {
+        sendJson(res, 500, { error: "internal_error" });
+      } else {
+        res.destroy();
+      }
+    }
+  }
+  await new Promise((resolve7, reject) => {
+    server.once("error", reject);
+    server.listen(opts.port, "127.0.0.1", () => {
+      server.removeListener("error", reject);
+      resolve7();
+    });
+  });
+  const address = server.address();
+  const port = typeof address === "object" && address !== null ? address.port : opts.port;
+  return {
+    port,
+    router,
+    sessions,
+    close() {
+      eventsRoute.dispose();
+      return new Promise((resolve7, reject) => {
+        server.close((error) => error ? reject(error) : resolve7());
+      });
+    }
+  };
+}
+
+// src/ui.ts
+function ok7(message) {
+  process.stdout.write(`${message}
+`);
+}
+function parseUiPort(value) {
+  if (value === undefined)
+    return 0;
+  if (!/^\d+$/.test(value)) {
+    die6(`ui: --port "${value}" is not a valid port number (expected 0..65535)`);
+  }
+  const port = Number(value);
+  if (!Number.isSafeInteger(port) || port > 65535) {
+    die6(`ui: --port "${value}" is not a valid port number (expected 0..65535)`);
+  }
+  return port;
+}
+function openerFailure(command) {
+  return () => {
+    process.stderr.write(`ui: could not launch a browser (${command} not available) — run \`mesh ui --print\` and paste the URL manually
+`);
+  };
+}
+function isAddressInUse(error) {
+  return error instanceof Error && (error.code === "EADDRINUSE" || /EADDRINUSE/.test(error.message));
+}
+async function cmdUi(args2, deps = {}) {
+  const port = parseUiPort(flag6(args2, "port"));
+  const printOnly = flagBool4(args2, "print");
+  const noOpen = flagBool4(args2, "no-open");
+  const profile = flag6(args2, "profile");
+  if (profile !== undefined && !listProfiles().includes(profile)) {
+    die6(`ui: --profile "${profile}" has no local home — run "mesh keygen --profile ${profile}" first`);
+  }
+  let broker;
+  try {
+    broker = await createBroker({ port });
+  } catch (error) {
+    if (isAddressInUse(error)) {
+      die6(`ui: port ${port} is already in use — pass --port <other> or stop the other process`);
+    }
+    throw error;
+  }
+  let token;
+  try {
+    deps.onBrokerReady?.(broker);
+    token = broker.sessions.mintLaunch();
+  } catch (error) {
+    await broker.close();
+    throw error;
+  }
+  const focus = profile === undefined ? "" : `?focus=${encodeURIComponent(profile)}`;
+  const origin = `http://127.0.0.1:${broker.port}/`;
+  const launchUrl = `${origin}${focus}#s=${token}`;
+  if (printOnly) {
+    ok7(launchUrl);
+    return;
+  }
+  if (noOpen) {
+    ok7(`ui: manager listening at ${origin} — open this link:
+${launchUrl}`);
+    return;
+  }
+  const { command, args: openerArgs } = openerFor(launchUrl);
+  const onError = openerFailure(command);
+  try {
+    if (deps.spawnOpener === undefined) {
+      defaultSpawnOpener(command, openerArgs, onError);
+    } else {
+      deps.spawnOpener(command, openerArgs, onError);
+    }
+  } catch {
+    onError(new Error("opener failed"));
+  }
+  ok7(`ui: manager running at ${origin} (Ctrl+C to stop)`);
+}
+
+// src/fs-status.ts
+import { readFileSync as readFileSync11, statSync as statSync3, existsSync as existsSync7 } from "node:fs";
+import { join as join11 } from "node:path";
+async function statusScan(client2, opts) {
+  const { prefix, root, home, deep } = opts;
+  const normPrefix = prefix ? normalizeId(prefix) : "";
+  const [treeResult, leasesResult] = await Promise.all([
+    client2.getTree(prefix || undefined),
+    client2.listLeases()
+  ]);
+  if ("error" in treeResult)
+    die6(`fs status: [${treeResult.error}] ${treeResult.detail}`);
+  if (!Array.isArray(leasesResult))
+    die6(`fs status: [${leasesResult.error}] ${leasesResult.detail}`);
+  const scanDir = normPrefix ? join11(root, normPrefix) : root;
+  const isIgnored = makeIgnore(loadMeshignore(scanDir), {});
+  const localAbsByPath = new Map;
+  try {
+    const st = statSync3(scanDir);
+    if (st.isDirectory()) {
+      for (const rel of walkDirFiles(scanDir, isIgnored)) {
+        const repoPath = normalizeId([normPrefix, rel].filter((s) => s.length > 0).join("/"));
+        localAbsByPath.set(repoPath, join11(scanDir, rel));
+      }
+    } else if (st.isFile() && normPrefix) {
+      localAbsByPath.set(normPrefix, scanDir);
+    }
+  } catch {}
+  const local = new Map;
+  for (const [p, abs2] of localAbsByPath) {
+    const bytes = readFileSync11(abs2);
+    const text = isValidUtf8Bytes(new Uint8Array(bytes)) ? bytes.toString("utf8") : undefined;
+    local.set(p, { hash: "r2:" + sha256hex(new Uint8Array(bytes)), text });
+  }
+  const tip = new Map(treeResult.tree.map((n) => [n.path, n]));
+  const lease = new Map(leasesResult.map((l) => [l.path, { holder: l.holder, expiresAtMs: l.lease_expires }]));
+  const sidecarOnlyPaths = (opts.roomKey !== undefined ? [...new Set([...listFolderSidecarPaths(root, opts.roomKey), ...opts.legacyAmbiguous ? [] : listSidecarPaths(client2.roomId, home)])] : opts.legacyAmbiguous ? [] : listSidecarPaths(client2.roomId, home)).filter((p) => !normPrefix || p === normPrefix || p.startsWith(normPrefix + "/"));
+  const baseTipHash = new Map;
+  for (const p of new Set([...local.keys(), ...tip.keys(), ...sidecarOnlyPaths])) {
+    const sidecar = opts.roomKey !== undefined ? readSidecarResolved(root, opts.roomKey, client2.roomId, p, home, opts.legacyAmbiguous) : readSidecar(client2.roomId, p, home);
+    if (sidecar)
+      baseTipHash.set(p, sidecar.tip_hash);
+  }
+  const ignoredLocally = new Set;
+  for (const p of tip.keys()) {
+    if (local.has(p))
+      continue;
+    const rel = normPrefix && (p === normPrefix || p.startsWith(normPrefix + "/")) ? p.slice(normPrefix.length + 1) : p;
+    if (isIgnored(rel) && existsSync7(join11(scanDir, rel)))
+      ignoredLocally.add(p);
+  }
+  const rows = composeStatusRows({ local, tip, baseTipHash, lease, sidecarOnlyPaths, ignoredLocally }, Date.now());
+  if (deep) {
+    for (const row of rows) {
+      if (row.state !== "diverged")
+        continue;
+      const localAbs = localAbsByPath.get(row.path);
+      const node = tip.get(row.path);
+      const sidecar = opts.roomKey !== undefined ? readSidecarResolved(root, opts.roomKey, client2.roomId, row.path, home, opts.legacyAmbiguous) : readSidecar(client2.roomId, row.path, home);
+      if (!localAbs || !node?.content_hash || !sidecar || sidecar.content === undefined)
+        continue;
+      const localBytes = readFileSync11(localAbs);
+      if (!isValidUtf8Bytes(new Uint8Array(localBytes)))
+        continue;
+      let hash;
+      try {
+        hash = hashFromRef(node.content_hash);
+      } catch {
+        continue;
+      }
+      const tipBlob = await client2.getArtifact(hash);
+      if (!(tipBlob instanceof Uint8Array) || !isValidUtf8Bytes(tipBlob))
+        continue;
+      const verdict = dryRunMergeVerdict(threeWayMerge(sidecar.content, Buffer.from(tipBlob).toString("utf8"), localBytes.toString("utf8")));
+      row.detail = row.detail ? `${row.detail}; ${verdict}` : verdict;
+    }
+  }
+  return rows;
+}
+function resolveReadOnlyRoot(opts) {
+  const twoLeg = resolveStatusRoot(opts.rootFlag, opts.cwd, { origin: opts.origin, roomId: opts.roomId });
+  const resolved = twoLeg ?? (opts.membershipRoot !== undefined ? { root: opts.membershipRoot, source: "membership-default" } : null);
+  if (resolved === null) {
+    throw new Error(`${opts.command}: could not resolve a workspace root — tried --root, the nearest enclosing .mesh/ attachment, and this profile's registered default. Pass --root <dir>, or run "mesh fs get/put/hydrate" here once to attach this folder.`);
+  }
+  return {
+    root: resolved.root,
+    source: resolved.source,
+    roomKey: roomKeyFor(opts.origin, opts.roomId),
+    legacyAmbiguous: isRoomIdAmbiguous(opts.roomId, opts.home)
+  };
+}
+
+// src/fs-prune-ignored.ts
+async function pruneIgnoredPaths(opts) {
+  const { root, roomKey, roomId, home, treePrefix, isIgnored, getTree, postDelete } = opts;
+  const sidecarPaths = [...new Set([...listFolderSidecarPaths(root, roomKey), ...listSidecarPaths(roomId, home)])].filter((p) => !treePrefix || p === treePrefix || p.startsWith(treePrefix + "/"));
+  const treeResult = await getTree(treePrefix || undefined);
+  if ("error" in treeResult)
+    return { ok: false, error: treeResult.error, detail: treeResult.detail };
+  const tipPaths = new Set(treeResult.tree.map((n) => n.path));
+  const rows = [];
+  let prunedCount = 0;
+  for (const p of sidecarPaths) {
+    if (!tipPaths.has(p))
+      continue;
+    const rel = treePrefix && (p === treePrefix || p.startsWith(treePrefix + "/")) ? p.slice(treePrefix.length + 1) : p;
+    if (!isIgnored(rel))
+      continue;
+    const r = await postDelete(p);
+    if (r.ok) {
+      dropFolderSidecar(root, roomKey, p);
+      dropSidecar(roomId, p, home);
+      prunedCount++;
+      rows.push({ path: p, ok: true });
+    } else {
+      rows.push({ path: p, ok: false, error: r.error, detail: r.detail });
+    }
+  }
+  return { ok: true, rows, prunedCount };
+}
+
 // src/version.ts
-import { readFileSync as readFileSync7 } from "node:fs";
-import { dirname as dirname6, resolve as resolve3 } from "node:path";
+import { readFileSync as readFileSync12 } from "node:fs";
+import { dirname as dirname8, resolve as resolve7 } from "node:path";
 import { fileURLToPath } from "node:url";
 function getVersion() {
   if (true)
-    return "1.26.0";
+    return "1.28.0";
   try {
-    const here = dirname6(fileURLToPath(import.meta.url));
-    return readFileSync7(resolve3(here, "../../../VERSION"), "utf8").trim();
+    const here = dirname8(fileURLToPath(import.meta.url));
+    return readFileSync12(resolve7(here, "../../../VERSION"), "utf8").trim();
   } catch {
     return "unknown";
   }
 }
 
 // src/main.ts
-function ok7(msg) {
+function ok8(msg) {
   process.stdout.write(msg + `
 `);
 }
@@ -11796,35 +14143,35 @@ function grepLine(r) {
 function formatGrepSkipNote(skippedCount) {
   return skippedCount > 0 ? `fs grep: ${skippedCount} file(s) excluded from the index (over the room's fts_max_file_bytes cap) — not searched: raise it via mesh fs config fts <bytes>` : undefined;
 }
-async function hydrateGrepWinners(client2, paths, into, roomId, home, onProgress) {
+async function hydrateGrepWinners(client2, paths, into, roomId, roomKey, home, onProgress) {
   if (paths.length === 0)
     return { rows: [], exitCode: 0 };
-  const result = await runGetBatch(client2, { roomId, home, into, prune: false, targets: paths, explicitOnly: true, onProgress });
+  const result = await runGetBatch(client2, { roomId, home, into, roomKey, prune: false, targets: paths, explicitOnly: true, onProgress });
   for (const row of result.rows) {
     const line = formatGetRowMessage(row.repoPath, row.outcome);
     if (line)
-      ok7(line);
+      ok8(line);
   }
   return result;
 }
-async function hydrateSubtree(client2, prefix, into, roomId, home, prune = false, onProgress) {
-  const result = await runGetBatch(client2, { roomId, home, into, prune, treePrefix: prefix || undefined, onProgress });
+async function hydrateSubtree(client2, prefix, into, roomId, roomKey, home, prune = false, onProgress) {
+  const result = await runGetBatch(client2, { roomId, home, into, roomKey, prune, treePrefix: prefix || undefined, onProgress });
   for (const row of result.rows) {
     const line = formatGetRowMessage(row.repoPath, row.outcome);
     if (line)
-      ok7(line);
+      ok8(line);
   }
   return result;
 }
 function localSizes(paths, into) {
-  const base = resolve4(into);
+  const base = resolve8(into);
   const sizes = {};
-  for (const path4 of paths) {
-    const dest = resolve4(into, path4);
+  for (const path6 of paths) {
+    const dest = resolve8(into, path6);
     if (dest !== base && !dest.startsWith(base + sep3))
       continue;
     try {
-      sizes[path4] = statSync2(dest).size;
+      sizes[path6] = statSync4(dest).size;
     } catch {}
   }
   return sizes;
@@ -11853,12 +14200,12 @@ async function cmdKeygen(args2) {
   }
   const roles = (flag6(args2, "roles") ?? "").split(",").map((r) => r.trim()).filter(Boolean);
   const identity = createIdentity(id2, home, roles);
-  ok7(`Created identity: ${identity.id}`);
-  ok7(`  home:   ${homeDir}`);
-  ok7(`  pubkey: ${identity.pubkey}`);
+  ok8(`Created identity: ${identity.id}`);
+  ok8(`  home:   ${homeDir}`);
+  ok8(`  pubkey: ${identity.pubkey}`);
   if (roles.length > 0)
-    ok7(`  roles:  ${roles.join(", ")}  (asserted in the card at join → verdict authority for these role refs)`);
-  ok7(`To reuse this id elsewhere, COPY ${homeDir}/identity.json — never re-run keygen (that makes a new key).`);
+    ok8(`  roles:  ${roles.join(", ")}  (asserted in the card at join → verdict authority for these role refs)`);
+  ok8(`To reuse this id elsewhere, COPY ${homeDir}/identity.json — never re-run keygen (that makes a new key).`);
 }
 async function cmdKeyRotate(args2) {
   const home = flag6(args2, "home");
@@ -11880,7 +14227,7 @@ async function cmdKeyRotate(args2) {
   if (!result.ok)
     die6(`key rotate failed: [${result.error}] ${result.detail}${result.hint ? " — " + result.hint : ""}`);
   persistOrExplain(rotated, home);
-  ok7(`Rotated key for ${identity.id} (seq=${result.seq}). New pubkey: ${rotated.pubkey}`);
+  ok8(`Rotated key for ${identity.id} (seq=${result.seq}). New pubkey: ${rotated.pubkey}`);
 }
 async function cmdKeyRetire(args2) {
   const home = flag6(args2, "home");
@@ -11906,7 +14253,7 @@ async function cmdKeyRetire(args2) {
   });
   if (!result.ok)
     die6(`key retire failed: [${result.error}] ${result.detail}${result.hint ? " — " + result.hint : ""}`);
-  ok7(`Retired ${identity.id} (seq=${result.seq}). This identity may no longer author entries in ${roomId}.`);
+  ok8(`Retired ${identity.id} (seq=${result.seq}). This identity may no longer author entries in ${roomId}.`);
 }
 async function cmdKey(args2) {
   const sub = args2.positional.shift();
@@ -11947,7 +14294,7 @@ async function cmdCreateRoom(args2) {
     die6(`No identity found. Run "mesh keygen --id ${ownerId}" first.`);
   if (identity.id !== ownerId)
     die6(`Identity id "${identity.id}" does not match --owner "${ownerId}"`);
-  const card = buildCard(identity.id, identity.pubkey, identity.secretBytes, { roles: identity.roles, host: flag6(args2, "host") ?? os3.hostname() });
+  const card = buildCard(identity.id, identity.pubkey, identity.secretBytes, { roles: identity.roles, host: flag6(args2, "host") ?? os5.hostname() });
   const joinSecret = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("hex");
   const nextPubkey = identity.next_pubkey ?? ensureNextKey(loadIdentity(home), home).next_pubkey;
   const nextCommitment = keyCommitment(nextPubkey);
@@ -11960,20 +14307,24 @@ async function cmdCreateRoom(args2) {
     die6(`create-room: room created but owner auto-join failed: [${joined.error}] ${joined.detail}${joined.hint ? " — " + joined.hint : ""}`);
   }
   upsertRoom(roomId, { url: roomUrl, token: joined.token, participant_id: joined.participant_id, join_secret: joinSecret }, home);
-  setActiveRoom(roomId, home);
+  try {
+    registerHome(home ?? meshHome());
+  } catch {}
+  const createOrigin = normalizeOrigin(roomUrl);
+  setActiveRoom(roomKeyFor(createOrigin, roomId), home);
   saveConfig({ defaultRoomUrl: workerUrl }, home);
-  ok7(`Room created: ${roomUrl}`);
-  ok7(`Joined as owner: ${joined.participant_id}`);
-  ok7(`Invite:       ${result.invite}`);
-  ok7(`Room pubkey:  ${result.room_pubkey}`);
-  ok7(`
+  ok8(`Room created: ${roomUrl}`);
+  ok8(`Joined as owner: ${joined.participant_id}`);
+  ok8(`Invite:       ${result.invite}`);
+  ok8(`Room pubkey:  ${result.room_pubkey}`);
+  ok8(`
 Share the invite with participants. They run:
   mesh room join ${roomUrl} ${result.invite}`);
 }
 async function cmdInit(args2) {
   if (!process.stdin.isTTY)
     die6("mesh init: requires an interactive terminal (stdin must be a TTY)");
-  ok7(`Welcome to mesh! Let's get you set up.
+  ok8(`Welcome to mesh! Let's get you set up.
 `);
   const profile = await promptLine("Profile name", "default");
   setActiveProfile(profile);
@@ -11990,11 +14341,11 @@ async function cmdInit(args2) {
     if (!roomId)
       die6("init: room id cannot be empty");
     if (!loadIdentity(profileHome)) {
-      ok7(`
+      ok8(`
 Creating identity "${id2}"…`);
       await cmdKeygen({ positional: [], flags: { id: id2, home: profileHome } });
     }
-    ok7(`
+    ok8(`
 Creating room…`);
     await cmdCreateRoom({ positional: [roomId], flags: { owner: id2, url, home: profileHome } });
   } else {
@@ -12003,11 +14354,11 @@ Creating room…`);
     if (!roomUrl || !secret)
       die6("init: room URL and invite secret are required to join");
     if (!loadIdentity(profileHome)) {
-      ok7(`
+      ok8(`
 Creating identity "${id2}"…`);
       await cmdKeygen({ positional: [], flags: { id: id2, home: profileHome } });
     }
-    ok7(`
+    ok8(`
 Joining room…`);
     await cmdJoin({ positional: [roomUrl, secret], flags: { home: profileHome } });
   }
@@ -12058,7 +14409,7 @@ async function cmdJoin(args2) {
   const identity = loadIdentityWithSecret(home);
   if (!identity)
     die6('No identity found. Run "mesh keygen --id <id>" first.');
-  const card = buildCard(identity.id, identity.pubkey, identity.secretBytes, { roles: identity.roles, host: flag6(args2, "host") ?? os3.hostname() });
+  const card = buildCard(identity.id, identity.pubkey, identity.secretBytes, { roles: identity.roles, host: flag6(args2, "host") ?? os5.hostname() });
   const nextPubkey = identity.next_pubkey ?? ensureNextKey(loadIdentity(home), home).next_pubkey;
   const nextCommitment = keyCommitment(nextPubkey);
   const result = passphrase !== undefined ? await joinRoomWithPassphrase(roomUrl, roomId, passphrase, card, identity.secretBytes, nextCommitment) : await joinRoom(roomUrl, roomId, joinSecret, card, identity.secretBytes, nextCommitment);
@@ -12068,13 +14419,17 @@ async function cmdJoin(args2) {
     die6(`join failed: [${result.error}] ${result.detail}${result.hint ? " — " + result.hint : ""}`);
   }
   upsertRoom(roomId, { url: roomUrl, token: result.token, participant_id: result.participant_id }, home);
-  setActiveRoom(roomId, home);
-  ok7(`Joined ${roomId} as ${result.participant_id}`);
-  ok7(`Head: seq=${result.head.seq} ${result.head.entry_hash}`);
-  ok7("");
-  ok7("next steps:");
+  try {
+    registerHome(home ?? meshHome());
+  } catch {}
+  const joinOrigin = normalizeOrigin(roomUrl);
+  setActiveRoom(roomKeyFor(joinOrigin, roomId), home);
+  ok8(`Joined ${roomId} as ${result.participant_id}`);
+  ok8(`Head: seq=${result.head.seq} ${result.head.entry_hash}`);
+  ok8("");
+  ok8("next steps:");
   for (const cmd of JOIN_NEXT_STEPS)
-    ok7(`  ${cmd}`);
+    ok8(`  ${cmd}`);
 }
 async function cmdRoom(args2) {
   const sub = args2.positional.shift();
@@ -12102,17 +14457,18 @@ async function cmdRoom(args2) {
 async function cmdRoomList(args2) {
   const home = flag6(args2, "home");
   const rooms = loadRooms(home);
-  const ids = Object.keys(rooms);
-  if (ids.length === 0) {
-    ok7('No rooms joined. Run "mesh room join" first.');
+  const roomKeys = Object.keys(rooms.memberships);
+  if (roomKeys.length === 0) {
+    ok8('No rooms joined. Run "mesh room join" first.');
     return;
   }
   const active = getActiveRoom(home);
-  ok7(`Joined rooms (${ids.length})${active ? `, active: ${active}` : ""}:`);
-  for (const id2 of ids) {
-    const r = rooms[id2];
+  ok8(`Joined rooms (${roomKeys.length})${active ? `, active: ${active}` : ""}:`);
+  for (const roomKey of roomKeys) {
+    const r = rooms.memberships[roomKey];
+    const id2 = roomIdFromRoomKey(roomKey);
     const mark = id2 === active ? "*" : " ";
-    ok7(`${mark} ${id2}  —  as ${r.participant_id}  —  ${r.url}`);
+    ok8(`${mark} ${id2}  —  as ${r.participant_id}  —  ${r.url}`);
   }
 }
 async function cmdRoomRm(args2) {
@@ -12120,18 +14476,28 @@ async function cmdRoomRm(args2) {
   if (!roomId)
     die6("room rm: <room_id> is required");
   const home = flag6(args2, "home");
-  if (!removeRoom(roomId, home))
-    die6(`room rm: "${roomId}" not in rooms.json`);
-  ok7(`Forgot room ${roomId} locally (rooms.json). This does not delete the room on the server.`);
+  const urlFlag = flag6(args2, "url");
+  try {
+    if (!removeRoom(roomId, home, urlFlag))
+      die6(`room rm: "${roomId}" not in rooms.json`);
+  } catch (e) {
+    die6(e instanceof Error ? e.message : String(e));
+  }
+  ok8(`Forgot room ${roomId} locally (rooms.json). This does not delete the room on the server.`);
 }
 async function cmdRoomDelete(args2) {
   const roomId = args2.positional[0];
   if (!roomId)
     die6("room delete: <room_id> is required");
   const home = flag6(args2, "home");
-  const room = loadRooms(home)[roomId];
-  if (!room)
-    die6(`room delete: not joined to "${roomId}" locally — need its url + token to authorize. Run from the owner's MESH_HOME.`);
+  const urlFlag = flag6(args2, "url");
+  let resolved;
+  try {
+    resolved = resolveRoom(roomId, home, urlFlag);
+  } catch (e) {
+    die6(`room delete: not joined to "${roomId}" locally — need its url + token to authorize. Run from the owner's MESH_HOME. (${e instanceof Error ? e.message : String(e)})`);
+  }
+  const room = resolved.entry;
   const identity = loadIdentityWithSecret(home);
   if (!identity)
     die6('No identity. Run "mesh keygen" first.');
@@ -12148,8 +14514,8 @@ async function cmdRoomDelete(args2) {
       die6(`room delete: only the room owner may delete "${roomId}" — run this from the owner's MESH_HOME.`);
     die6(`room delete failed: ${result.error} (HTTP ${result.status})`);
   }
-  removeRoom(roomId, home);
-  ok7(`Deleted room "${roomId}" on the server and forgot it locally. Re-create the id to reuse it.`);
+  removeRoom(roomId, home, urlFlag);
+  ok8(`Deleted room "${roomId}" on the server and forgot it locally. Re-create the id to reuse it.`);
 }
 function extractInviteSecret(invite, roomId) {
   return invite.startsWith(roomId + ".") ? invite.slice(roomId.length + 1) : invite;
@@ -12303,7 +14669,7 @@ async function cmdRoomInvite(args2) {
   if (!showFlag && !rotateFlag && !forId && !listFlag && !revokeId) {
     die6("room invite: use --show | --rotate | --for <participant-id> [--passphrase <phrase>] [--ttl <seconds>] | --list | --revoke <participant-id>");
   }
-  const { roomId: resolvedId, entry: room } = resolveRoom(roomId, home);
+  const { roomId: resolvedId, entry: room } = resolveRoom(roomId, home, flag6(args2, "url") || undefined);
   const identity = loadIdentityWithSecret(home);
   if (!identity)
     die6('No identity. Run "mesh keygen" first.');
@@ -12311,7 +14677,7 @@ async function cmdRoomInvite(args2) {
     if (!room.join_secret) {
       die6(`room invite --show: no local join_secret for "${resolvedId}" (only the room creator has it; the room never stores plaintext)`);
     }
-    ok7(`${resolvedId}.${room.join_secret}`);
+    ok8(`${resolvedId}.${room.join_secret}`);
     return;
   }
   const client2 = new MeshClient({
@@ -12330,8 +14696,8 @@ async function cmdRoomInvite(args2) {
     }
     const newSecret = extractInviteSecret(result.invite, resolvedId);
     upsertRoom(resolvedId, { ...room, join_secret: newSecret }, home);
-    ok7(`New invite: ${result.invite}`);
-    ok7(`Share with participants: mesh room join ${room.url} ${result.invite}`);
+    ok8(`New invite: ${result.invite}`);
+    ok8(`Share with participants: mesh room join ${room.url} ${result.invite}`);
   } else if (forId) {
     const passphrase = flag6(args2, "passphrase") ?? generatePassphrase();
     const ttlRaw = flag6(args2, "ttl");
@@ -12345,11 +14711,11 @@ async function cmdRoomInvite(args2) {
       die6(`room invite --for failed: [${result.error}] ${result.detail}`);
     }
     const mins = Math.round((result.expires - Date.now()) / 60000);
-    ok7(`Passphrase invite for "${forId}": ${passphrase}`);
-    ok7(`Single-use, expires in ~${mins} min. Share the phrase out-of-band; they run:`);
-    ok7(`  mesh keygen --id "${forId}"   (if they have no identity yet)`);
-    ok7(`  mesh room join ${room.url} ${resolvedId} --passphrase ${passphrase}`);
-    ok7(`Note: the phrase only admits an agent whose identity id is exactly "${forId}".`);
+    ok8(`Passphrase invite for "${forId}": ${passphrase}`);
+    ok8(`Single-use, expires in ~${mins} min. Share the phrase out-of-band; they run:`);
+    ok8(`  mesh keygen --id "${forId}"   (if they have no identity yet)`);
+    ok8(`  mesh room join ${room.url} ${resolvedId} --passphrase ${passphrase}`);
+    ok8(`Note: the phrase only admits an agent whose identity id is exactly "${forId}".`);
   } else if (listFlag) {
     const result = await client2.listPassphraseInvites();
     if (!result.ok) {
@@ -12358,13 +14724,13 @@ async function cmdRoomInvite(args2) {
       die6(`room invite --list failed: [${result.error}] ${result.detail}`);
     }
     if (result.invites.length === 0) {
-      ok7("No pending passphrase invites.");
+      ok8("No pending passphrase invites.");
       return;
     }
-    ok7(`Pending passphrase invites (${result.invites.length}):`);
+    ok8(`Pending passphrase invites (${result.invites.length}):`);
     for (const inv of result.invites) {
       const mins = Math.max(0, Math.round((inv.expires - Date.now()) / 60000));
-      ok7(`  ${inv.participant_id}  —  expires in ~${mins} min${inv.attempts > 0 ? `  —  ${inv.attempts} failed attempt(s)` : ""}`);
+      ok8(`  ${inv.participant_id}  —  expires in ~${mins} min${inv.attempts > 0 ? `  —  ${inv.attempts} failed attempt(s)` : ""}`);
     }
   } else if (revokeId) {
     const result = await client2.revokePassphraseInvite(revokeId);
@@ -12375,14 +14741,14 @@ async function cmdRoomInvite(args2) {
         die6(`room invite --revoke: only the room owner may revoke invites for "${resolvedId}".`);
       die6(`room invite --revoke failed: [${result.error}] ${result.detail}`);
     }
-    ok7(`Revoked pending invite for "${revokeId}".`);
+    ok8(`Revoked pending invite for "${revokeId}".`);
   }
 }
 function isFilePlaneEntry(performative) {
   return performative.startsWith("file.") || performative === "system.grant" || performative === "system.role" || performative === "system.lease_clear" || performative === "system.revoke" || performative === "system.config";
 }
 function flagOutOfScope(closure, canRead) {
-  return closure.map((path4) => ({ path: path4, readable: canRead(path4) }));
+  return closure.map((path6) => ({ path: path6, readable: canRead(path6) }));
 }
 function resolveLogExclude(all2) {
   return all2 ? undefined : [...COLLAB_LANE_EXCLUDE];
@@ -12411,12 +14777,12 @@ async function cmdLog(args2) {
   const all2 = flagBool4(args2, "all");
   const home = flag6(args2, "home");
   const roomArg = flag6(args2, "room");
-  const { entry: room } = resolveRoom(roomArg, home);
+  const { entry: room } = resolveRoom(roomArg, home, flag6(args2, "url"));
   const identity = loadIdentityWithSecret(home);
   if (!identity)
     die6('No identity. Run "mesh keygen" first.');
   const roomIdFromUrl = room.url.split("/").pop() ?? "unknown";
-  ok7(ansi(DIM, `room: ${roomIdFromUrl}`));
+  ok8(ansi(DIM, `room: ${roomIdFromUrl}`));
   const client2 = new MeshClient({
     roomUrl: room.url,
     token: room.token,
@@ -12432,7 +14798,7 @@ async function cmdLog(args2) {
       client2.getState().catch(() => null)
     ]);
     if (entries.length > 0)
-      ok7(renderEntries(entries));
+      ok8(renderEntries(entries));
     let senderWidth;
     if (entries.length > 0) {
       const widths = entries.map((e) => e.submission.sender.length);
@@ -12445,7 +14811,7 @@ async function cmdLog(args2) {
     if (tty)
       process.stdout.write(footer);
     else
-      ok7(footer);
+      ok8(footer);
     for await (const frame of client2.follow(since, undefined, { exclude })) {
       if (frame.type === "entry") {
         if (senderWidth === undefined) {
@@ -12455,7 +14821,7 @@ async function cmdLog(args2) {
         if (tty)
           printAboveFooter(line, footer);
         else
-          ok7(line);
+          ok8(line);
         since = frame.entry.seq;
       }
     }
@@ -12465,19 +14831,19 @@ async function cmdLog(args2) {
   } else {
     const { entries, head } = await fetchLogEntries(client2, exclude);
     if (entries.length === 0) {
-      ok7("(no entries)");
+      ok8("(no entries)");
     } else {
-      ok7(renderEntries(entries));
+      ok8(renderEntries(entries));
     }
-    ok7(renderStateHeader(head));
+    ok8(renderStateHeader(head));
     if (laneHint)
-      ok7(ansi(DIM, laneHint));
+      ok8(ansi(DIM, laneHint));
   }
 }
 async function cmdChat(args2) {
   const home = flag6(args2, "home");
   const roomArg = flag6(args2, "room");
-  const { entry: room } = resolveRoom(roomArg, home);
+  const { entry: room } = resolveRoom(roomArg, home, flag6(args2, "url"));
   const identity = loadIdentityWithSecret(home);
   if (!identity)
     die6('No identity. Run "mesh keygen" first.');
@@ -12494,13 +14860,13 @@ async function cmdChat(args2) {
     client2.getState().catch(() => null)
   ]);
   if (entries.length > 0)
-    ok7(renderEntries(entries));
+    ok8(renderEntries(entries));
   const widths = entries.map((e) => e.submission.sender.length);
   let senderWidth = widths.length > 0 ? Math.min(28, Math.max(12, Math.max(...widths))) : undefined;
   let since = head.seq;
   let inputExit;
-  const inputClosed = new Promise((resolve5) => {
-    inputExit = resolve5;
+  const inputClosed = new Promise((resolve9) => {
+    inputExit = resolve9;
   });
   const ac = new AbortController;
   const badge = state !== null ? composeBadge({ unread: 0, fsBehind: 0, fsConflict: 0, openDecisions: openDecisionsCount(state, identity.id) }) : null;
@@ -12549,7 +14915,7 @@ async function cmdPost(args2) {
   const thread = flag6(args2, "thread");
   const home = flag6(args2, "home");
   const roomArg = flag6(args2, "room");
-  const { roomId, entry: room } = resolveRoom(roomArg, home);
+  const { roomId, entry: room } = resolveRoom(roomArg, home, flag6(args2, "url"));
   const identity = loadIdentityWithSecret(home);
   if (!identity)
     die6('No identity. Run "mesh keygen" first.');
@@ -12566,7 +14932,7 @@ async function cmdPost(args2) {
   const result = await client2.postEntry(input);
   if (!result.ok)
     die6(`post failed: [${result.error}] ${result.detail}`);
-  ok7(`Posted seq=${result.seq}`);
+  ok8(`Posted seq=${result.seq}`);
 }
 async function cmdAnnounce(args2) {
   const taskRef = args2.positional[0];
@@ -12575,7 +14941,7 @@ async function cmdAnnounce(args2) {
   const body = requiredFlag(args2, "body", "announce");
   const home = flag6(args2, "home");
   const roomArg = flag6(args2, "room");
-  const { roomId, entry: room } = resolveRoom(roomArg, home);
+  const { roomId, entry: room } = resolveRoom(roomArg, home, flag6(args2, "url"));
   const identity = loadIdentityWithSecret(home);
   if (!identity)
     die6('No identity. Run "mesh keygen" first.');
@@ -12605,7 +14971,7 @@ async function cmdAnnounce(args2) {
   const result = await client2.postEntry({ performative: "announce", task_ref: taskRef, body, data });
   if (!result.ok)
     die6(`announce failed: [${result.error}] ${result.detail}`);
-  ok7(`Announced ${taskRef} (seq=${result.seq})`);
+  ok8(`Announced ${taskRef} (seq=${result.seq})`);
 }
 async function simpleTaskCmd(performative, args2, requireBody = false) {
   const taskRef = args2.positional[0];
@@ -12614,7 +14980,7 @@ async function simpleTaskCmd(performative, args2, requireBody = false) {
   const body = flag6(args2, "body");
   const home = flag6(args2, "home");
   const roomArg = flag6(args2, "room");
-  const { roomId, entry: room } = resolveRoom(roomArg, home);
+  const { roomId, entry: room } = resolveRoom(roomArg, home, flag6(args2, "url"));
   const identity = loadIdentityWithSecret(home);
   if (!identity)
     die6('No identity. Run "mesh keygen" first.');
@@ -12636,7 +15002,7 @@ async function simpleTaskCmd(performative, args2, requireBody = false) {
   const result = await client2.postEntry(input);
   if (!result.ok)
     die6(`${performative} failed: [${result.error}] ${result.detail}${result.hint ? " — " + result.hint : ""}`);
-  ok7(`${performative} ${taskRef} (seq=${result.seq})`);
+  ok8(`${performative} ${taskRef} (seq=${result.seq})`);
 }
 async function runAck(client2, args2) {
   const seqArg = args2.positional[0];
@@ -12649,12 +15015,12 @@ async function runAck(client2, args2) {
   });
   if (!result.ok)
     die6(`ack failed: [${result.error}] ${result.detail}${result.hint ? " — " + result.hint : ""}`);
-  ok7(`acked escalation ${escalateSeq} (seq=${result.seq})`);
+  ok8(`acked escalation ${escalateSeq} (seq=${result.seq})`);
 }
 async function cmdAck(args2) {
   const home = flag6(args2, "home");
   const roomArg = flag6(args2, "room");
-  const { roomId, entry: room } = resolveRoom(roomArg, home);
+  const { roomId, entry: room } = resolveRoom(roomArg, home, flag6(args2, "url"));
   const identity = loadIdentityWithSecret(home);
   if (!identity)
     die6('No identity. Run "mesh keygen" first.');
@@ -12708,18 +15074,18 @@ async function runDeliver(client2, args2) {
   });
   if (!r.ok)
     die6(`deliver failed: [${r.error}] ${r.detail}${r.hint ? " — " + r.hint : ""}`);
-  ok7(m.mode === "dir" ? `delivered ${taskRef} (seq=${r.seq})${uploadNote}` : `deliver ${taskRef} (seq=${r.seq})`);
+  ok8(m.mode === "dir" ? `delivered ${taskRef} (seq=${r.seq})${uploadNote}` : `deliver ${taskRef} (seq=${r.seq})`);
   const watchOutcomes = await registerDeliverAutoWatch(client2, taskRef);
   for (const outcome of watchOutcomes) {
     if (!outcome.ok) {
-      ok7(`deliver: warning — watch registration failed [${outcome.error}] ${outcome.detail} — you will not be notified of the verdict`);
+      ok8(`deliver: warning — watch registration failed [${outcome.error}] ${outcome.detail} — you will not be notified of the verdict`);
     }
   }
 }
 async function cmdDeliver(args2) {
   const home = flag6(args2, "home");
   const roomArg = flag6(args2, "room");
-  const { roomId, entry: room } = resolveRoom(roomArg, home);
+  const { roomId, entry: room } = resolveRoom(roomArg, home, flag6(args2, "url"));
   const identity = loadIdentityWithSecret(home);
   if (!identity)
     die6('No identity. Run "mesh keygen" first.');
@@ -12761,7 +15127,7 @@ async function cmdFetch(args2) {
     die6("fetch: <task|r2:hash> is required");
   const home = flag6(args2, "home");
   const roomArg = flag6(args2, "room");
-  const { roomId, entry: room } = resolveRoom(roomArg, home);
+  const { roomId, entry: room } = resolveRoom(roomArg, home, flag6(args2, "url"));
   const identity = loadIdentityWithSecret(home);
   if (!identity)
     die6('No identity. Run "mesh keygen" first.');
@@ -12780,26 +15146,26 @@ async function cmdFetch(args2) {
     die6(err2 instanceof Error ? err2.message : String(err2));
   }
   if (ref.kind === "other") {
-    ok7(`Artifact is not an R2 tarball: ${ref.raw} (fetch it manually)`);
+    ok8(`Artifact is not an R2 tarball: ${ref.raw} (fetch it manually)`);
     return;
   }
   const bytes = await client2.getArtifact(ref.hash);
   if (!(bytes instanceof Uint8Array))
     die6(`fetch: [${bytes.error}] ${bytes.detail}${bytes.hint ? " — " + bytes.hint : ""}`);
   const name = arg.startsWith("r2:") ? ref.hash : arg;
-  const dest = resolve4(flag6(args2, "into") ?? join7(home ?? meshHome(), "artifacts", name));
+  const dest = resolve8(flag6(args2, "into") ?? join12(home ?? meshHome(), "artifacts", name));
   await unpackInto(bytes, dest);
-  ok7(`Extracted to ${dest}`);
+  ok8(`Extracted to ${dest}`);
 }
 var REFETCH_DEBOUNCE_MS = 300;
 var TICK_MS = 5000;
 var RECENT_LINES_CAP = 6;
 function cancelableDelay(ms) {
-  const { promise, resolve: resolve5 } = Promise.withResolvers();
-  const timer = setTimeout(resolve5, ms);
+  const { promise, resolve: resolve9 } = Promise.withResolvers();
+  const timer = setTimeout(resolve9, ms);
   return { promise, cancel: () => {
     clearTimeout(timer);
-    resolve5();
+    resolve9();
   } };
 }
 function startTicker(ms, onTick) {
@@ -12852,82 +15218,6 @@ function makeRateRetry(onWait) {
   };
 }
 var withRateRetry = makeRateRetry();
-async function statusScan(client2, opts) {
-  const { prefix, root, home, deep } = opts;
-  const normPrefix = prefix ? normalizeId(prefix) : "";
-  const [treeResult, leasesResult] = await Promise.all([
-    client2.getTree(prefix || undefined),
-    client2.listLeases()
-  ]);
-  if ("error" in treeResult)
-    die6(`fs status: [${treeResult.error}] ${treeResult.detail}`);
-  if (!Array.isArray(leasesResult))
-    die6(`fs status: [${leasesResult.error}] ${leasesResult.detail}`);
-  const scanDir = normPrefix ? join7(root, normPrefix) : root;
-  const isIgnored = makeIgnore(loadMeshignore(scanDir), {});
-  const localAbsByPath = new Map;
-  try {
-    const st = statSync2(scanDir);
-    if (st.isDirectory()) {
-      for (const rel of walkDirFiles(scanDir, isIgnored)) {
-        const repoPath = normalizeId([normPrefix, rel].filter((s) => s.length > 0).join("/"));
-        localAbsByPath.set(repoPath, join7(scanDir, rel));
-      }
-    } else if (st.isFile() && normPrefix) {
-      localAbsByPath.set(normPrefix, scanDir);
-    }
-  } catch {}
-  const local = new Map;
-  for (const [p, abs2] of localAbsByPath) {
-    const bytes = readFileSync8(abs2);
-    const text = isValidUtf8Bytes(new Uint8Array(bytes)) ? bytes.toString("utf8") : undefined;
-    local.set(p, { hash: "r2:" + sha256hex(new Uint8Array(bytes)), text });
-  }
-  const tip = new Map(treeResult.tree.map((n) => [n.path, n]));
-  const lease = new Map(leasesResult.map((l) => [l.path, { holder: l.holder, expiresAtMs: l.lease_expires }]));
-  const sidecarOnlyPaths = listSidecarPaths(client2.roomId, home).filter((p) => !normPrefix || p === normPrefix || p.startsWith(normPrefix + "/"));
-  const baseTipHash = new Map;
-  for (const p of new Set([...local.keys(), ...tip.keys(), ...sidecarOnlyPaths])) {
-    const sidecar = readSidecar(client2.roomId, p, home);
-    if (sidecar)
-      baseTipHash.set(p, sidecar.tip_hash);
-  }
-  const ignoredLocally = new Set;
-  for (const p of tip.keys()) {
-    if (local.has(p))
-      continue;
-    const rel = normPrefix && (p === normPrefix || p.startsWith(normPrefix + "/")) ? p.slice(normPrefix.length + 1) : p;
-    if (isIgnored(rel) && existsSync4(join7(scanDir, rel)))
-      ignoredLocally.add(p);
-  }
-  const rows = composeStatusRows({ local, tip, baseTipHash, lease, sidecarOnlyPaths, ignoredLocally }, Date.now());
-  if (deep) {
-    for (const row of rows) {
-      if (row.state !== "diverged")
-        continue;
-      const localAbs = localAbsByPath.get(row.path);
-      const node = tip.get(row.path);
-      const sidecar = readSidecar(client2.roomId, row.path, home);
-      if (!localAbs || !node?.content_hash || !sidecar || sidecar.content === undefined)
-        continue;
-      const localBytes = readFileSync8(localAbs);
-      if (!isValidUtf8Bytes(new Uint8Array(localBytes)))
-        continue;
-      let hash;
-      try {
-        hash = hashFromRef(node.content_hash);
-      } catch {
-        continue;
-      }
-      const tipBlob = await client2.getArtifact(hash);
-      if (!(tipBlob instanceof Uint8Array) || !isValidUtf8Bytes(tipBlob))
-        continue;
-      const verdict = dryRunMergeVerdict(threeWayMerge(sidecar.content, Buffer.from(tipBlob).toString("utf8"), localBytes.toString("utf8")));
-      row.detail = row.detail ? `${row.detail}; ${verdict}` : verdict;
-    }
-  }
-  return rows;
-}
 function resolveArtifactCap(defaults) {
   const v = defaults?.artifact_max_bytes;
   return typeof v === "number" && v > 0 ? v : DEFAULT_ARTIFACT_MAX_BYTES;
@@ -12938,63 +15228,93 @@ function oversizedTargets(sizes, capBytes) {
 function artifactCapExceededMessage(oversized, capBytes) {
   return `fs put: ${oversized.length} file(s) exceed the room's ${humanSize(capBytes)} artifact cap: ${oversized.join(", ")} — exclude via .meshignore, or raise it: mesh fs config artifact <bytes>`;
 }
+function resolvePutRepoPath(localPath, asFlag, root) {
+  if (asFlag !== undefined)
+    return asFlag;
+  return normalizeId(rebasePutPathOntoRoot(localPath, root));
+}
+function resolvePutDirPrefix(localPath, asFlag, root) {
+  const raw = asFlag !== undefined ? asFlag : rebasePutPathOntoRoot(localPath, root);
+  return raw.replace(/\\/g, "/").split("/").filter((s) => s.length > 0 && s !== ".").join("/");
+}
+function rebasePutPathOntoRoot(localPath, root) {
+  const rel = relative(root, resolve8(localPath));
+  if (rel.startsWith("..") || isAbsolute3(rel)) {
+    throw new Error(`fs put: ${localPath} resolves outside the workspace root ${root} — use --as <repopath> to name it explicitly, or --root to widen the workspace root`);
+  }
+  return rel;
+}
 var FS_CMDS = {
-  put: async (client2, args2, senderId) => {
+  put: async (client2, args2, senderId, origin) => {
     const localPath = args2.positional[0];
     if (!localPath)
       die6("fs put: <path> is required");
     let isDir = false, exists = true;
     try {
-      isDir = statSync2(localPath).isDirectory();
+      isDir = statSync4(localPath).isDirectory();
     } catch {
       exists = false;
     }
     if (!exists)
       die6(`fs put: no such file or directory: ${localPath}`);
-    const home = flag6(args2, "home");
+    const home = flag6(args2, "home") ?? meshHome();
     const strict = flagBool4(args2, "strict");
+    const attach = resolveAndAttachRoot({ rootFlag: flag6(args2, "root"), cwd: process.cwd(), home, origin, roomId: client2.roomId });
+    if (!attach.ok)
+      die6(attach.error);
+    const { root, resolved } = attach;
+    if (resolved !== null && root !== resolve8(process.cwd()))
+      process.stderr.write(`root: ${root} (resolved via ${resolved.source})
+`);
+    const roomKey = roomKeyFor(origin, client2.roomId);
     let candidates;
     let treePrefix;
     let batchLabel;
     let prunedCount = 0;
     if (isDir) {
-      const prefix = (flag6(args2, "as") ?? localPath).replace(/\\/g, "/").split("/").filter((s) => s.length > 0 && s !== ".").join("/");
+      let prefix;
+      try {
+        prefix = resolvePutDirPrefix(localPath, flag6(args2, "as"), root);
+      } catch (err2) {
+        die6(err2 instanceof Error ? err2.message : String(err2));
+      }
       const isIgnored = makeIgnore(loadMeshignore(localPath), { includeHidden: flagBool4(args2, "all") });
       const rels = walkDirFiles(localPath, isIgnored);
       if (rels.length === 0)
         die6(`fs put: ${localPath} has no eligible files (hidden entries skipped unless --all; .meshignore patterns applied)`);
       candidates = rels.map((rel) => ({
         repoPath: [prefix, rel].filter((s) => s.length > 0).join("/"),
-        localAbs: join7(localPath, rel)
+        localAbs: join12(localPath, rel)
       }));
       treePrefix = prefix;
       batchLabel = `${rels.length} file(s) from ${localPath}/ → ${prefix || "(room root)"}`;
       if (flagBool4(args2, "prune-ignored")) {
-        const sidecarPaths = listSidecarPaths(client2.roomId, home).filter((p) => !treePrefix || p === treePrefix || p.startsWith(treePrefix + "/"));
-        const treeResult = await client2.getTree(treePrefix || undefined);
-        if ("error" in treeResult)
-          die6(`fs put --prune-ignored: [${treeResult.error}] ${treeResult.detail}`);
-        const tipPaths = new Set(treeResult.tree.map((n) => n.path));
-        for (const p of sidecarPaths) {
-          if (!tipPaths.has(p))
-            continue;
-          const rel = treePrefix && (p === treePrefix || p.startsWith(treePrefix + "/")) ? p.slice(treePrefix.length + 1) : p;
-          if (!isIgnored(rel))
-            continue;
-          const r = await withRateRetry(() => client2.postEntry({ performative: "file.delete", data: { path: p } }), (x) => !x.ok && x.error === "rate_limited", (x) => !x.ok ? x.retry_after_s : undefined);
-          if (r.ok) {
-            dropSidecar(client2.roomId, p, home);
-            prunedCount++;
-            ok7(`  pruned: ${p}`);
-          } else
-            ok7(`  pruned: ${p} FAILED: [${r.error}] ${r.detail}`);
-        }
+        const pruneResult = await pruneIgnoredPaths({
+          root,
+          roomKey,
+          roomId: client2.roomId,
+          home,
+          treePrefix,
+          isIgnored,
+          getTree: (p) => client2.getTree(p),
+          postDelete: (p) => withRateRetry(() => client2.postEntry({ performative: "file.delete", data: { path: p } }), (x) => !x.ok && x.error === "rate_limited", (x) => !x.ok ? x.retry_after_s : undefined)
+        });
+        if (!pruneResult.ok)
+          die6(`fs put --prune-ignored: [${pruneResult.error}] ${pruneResult.detail}`);
+        for (const row of pruneResult.rows)
+          ok8(row.ok ? `  pruned: ${row.path}` : `  pruned: ${row.path} FAILED: [${row.error}] ${row.detail}`);
+        prunedCount = pruneResult.prunedCount;
       }
     } else {
-      const as = flag6(args2, "as") ?? localPath;
-      candidates = [{ repoPath: as, localAbs: localPath }];
-      treePrefix = as;
-      batchLabel = as;
+      let repoPath;
+      try {
+        repoPath = resolvePutRepoPath(localPath, flag6(args2, "as"), root);
+      } catch (err2) {
+        die6(err2 instanceof Error ? err2.message : String(err2));
+      }
+      candidates = [{ repoPath, localAbs: localPath }];
+      treePrefix = repoPath;
+      batchLabel = repoPath;
     }
     let state;
     try {
@@ -13003,7 +15323,7 @@ var FS_CMDS = {
       state = undefined;
     }
     const capBytes = resolveArtifactCap(state?.defaults);
-    const sizes = candidates.map((c) => ({ path: c.repoPath, size: statSync2(c.localAbs).size }));
+    const sizes = candidates.map((c) => ({ path: c.repoPath, size: statSync4(c.localAbs).size }));
     const oversized = oversizedTargets(sizes, capBytes);
     if (oversized.length > 0) {
       die6(artifactCapExceededMessage(oversized, capBytes));
@@ -13011,7 +15331,7 @@ var FS_CMDS = {
     const targets = candidates.map((c) => ({
       repoPath: c.repoPath,
       localAbs: c.localAbs,
-      localBytes: new Uint8Array(readFileSync8(c.localAbs))
+      localBytes: new Uint8Array(readFileSync13(c.localAbs))
     }));
     const json = flagBool4(args2, "json");
     const mode = resolveMode(json, process.stderr.isTTY ?? false);
@@ -13020,6 +15340,8 @@ var FS_CMDS = {
     const result = await runPutBatch(client2, targets, {
       roomId: client2.roomId,
       home,
+      root,
+      roomKey,
       selfId: senderId,
       strict,
       treePrefix,
@@ -13034,7 +15356,7 @@ var FS_CMDS = {
     const verbose = flagBool4(args2, "verbose") || flagBool4(args2, "v");
     for (const row of result.rows) {
       if (verbose || putRowNeedsAttention(row.outcome))
-        ok7(formatPutRowMessage(row.repoPath, row.outcome));
+        ok8(formatPutRowMessage(row.repoPath, row.outcome));
     }
     if (result.hardError && result.rows.length === 0) {
       const e = result.hardError;
@@ -13044,22 +15366,22 @@ var FS_CMDS = {
       return;
     }
     const summary = summarizePutRows(result.rows);
-    ok7(`fs put ${result.stopped ? "stopped early" : "done"}: ${formatPutSummary(batchLabel, summary)}${prunedCount > 0 ? `, ${prunedCount} pruned` : ""}  [exit ${result.exitCode}]`);
+    ok8(`fs put ${result.stopped ? "stopped early" : "done"}: ${formatPutSummary(batchLabel, summary)}${prunedCount > 0 ? `, ${prunedCount} pruned` : ""}  [exit ${result.exitCode}]`);
     if (result.stopped) {
       const done = result.rows.length, total = targets.length;
       const where = result.hardError ? "see the cause below" : "see the flagged rows above";
-      ok7(`  aborted at ${done}/${total} files — ${total - done} not attempted (${where}, resolve, then re-run to resume${flagBool4(args2, "stop-on-error") ? "; or drop --stop-on-error to skip failures and continue" : ""})`);
+      ok8(`  aborted at ${done}/${total} files — ${total - done} not attempted (${where}, resolve, then re-run to resume${flagBool4(args2, "stop-on-error") ? "; or drop --stop-on-error to skip failures and continue" : ""})`);
     }
     if (result.hardError) {
       const e = result.hardError;
       process.stderr.write(`  cause: [${e.error}]${e.detail ? " " + e.detail : ""}${e.hint ? " — " + e.hint : ""}
 `);
     } else if (summary.errors > 0) {
-      ok7(`  ${summary.errors} file(s) failed and were skipped (rows above); re-run to retry, or --stop-on-error to abort on the first failure`);
+      ok8(`  ${summary.errors} file(s) failed and were skipped (rows above); re-run to retry, or --stop-on-error to abort on the first failure`);
     }
     if (result.informed)
-      ok7("  conflicts/forks/resurrections signaled (see 'mesh fs status')");
-    ok7(`verify: mesh fs status${treePrefix ? " " + treePrefix : ""}${verbose ? "" : "   (--verbose for the full per-file list)"}`);
+      ok8("  conflicts/forks/resurrections signaled (see 'mesh fs status')");
+    ok8(`verify: mesh fs status${treePrefix ? " " + treePrefix : ""}${verbose ? "" : "   (--verbose for the full per-file list)"}`);
     process.exitCode = result.exitCode;
   },
   ls: async (client2, args2) => {
@@ -13090,7 +15412,7 @@ var FS_CMDS = {
       now: Date.now(),
       recent
     });
-    ok7(render());
+    ok8(render());
     if (!follow)
       return;
     const refetch = async () => {
@@ -13115,7 +15437,7 @@ var FS_CMDS = {
       const recentLines = [];
       const redraw = () => {
         process.stdout.write("\x1B[2J\x1B[H");
-        ok7(render(recentLines));
+        ok8(render(recentLines));
       };
       let refetchPending = false;
       let debounceTimer;
@@ -13142,18 +15464,25 @@ var FS_CMDS = {
       }
     } else {
       const footer = ansi(DIM, "— streaming fs entries (Ctrl+C to exit) —");
-      ok7(footer);
+      ok8(footer);
       await followFilePlane(client2, since, (line) => {
-        ok7(line);
+        ok8(line);
       });
     }
   },
-  get: async (client2, args2) => {
+  get: async (client2, args2, senderId, origin) => {
     const repopath = args2.positional[0];
     if (!repopath)
       die6("fs get: <repopath> is required");
-    const into = resolveWorkspaceRoot(flag6(args2, "into"), flag6(args2, "root"));
-    const home = flag6(args2, "home");
+    const home = flag6(args2, "home") ?? meshHome();
+    const attach = resolveAndAttachRoot({ rootFlag: resolveRootFlag(flag6(args2, "into"), flag6(args2, "root")), cwd: process.cwd(), home, origin, roomId: client2.roomId });
+    if (!attach.ok)
+      die6(attach.error);
+    const { root: into, resolved } = attach;
+    if (resolved !== null && into !== resolve8(process.cwd()))
+      process.stderr.write(`root: ${into} (resolved via ${resolved.source})
+`);
+    const roomKey = roomKeyFor(origin, client2.roomId);
     const prune = flagBool4(args2, "prune");
     const json = flagBool4(args2, "json");
     const reporter = createReporter({ mode: resolveMode(json, process.stderr.isTTY ?? false) });
@@ -13161,6 +15490,7 @@ var FS_CMDS = {
       roomId: client2.roomId,
       home,
       into,
+      roomKey,
       prune,
       treePrefix: repopath,
       targets: [repopath],
@@ -13186,15 +15516,15 @@ var FS_CMDS = {
     for (const row of result.rows) {
       const line = formatGetRowMessage(row.repoPath, row.outcome);
       if (line) {
-        ok7(line);
+        ok8(line);
         printed = true;
       }
     }
     if (!printed) {
-      ok7(result.rows.length > 1 ? `  ${repopath} (${result.rows.length} file(s), all in sync)` : `  ${repopath} (unchanged)`);
+      ok8(result.rows.length > 1 ? `  ${repopath} (${result.rows.length} file(s), all in sync)` : `  ${repopath} (unchanged)`);
     }
     if (result.rows.some((r) => getRowNeedsVerify(r.outcome)))
-      ok7(`verify: mesh fs status ${repopath}`);
+      ok8(`verify: mesh fs status ${repopath}`);
     process.exitCode = result.exitCode;
   },
   rm: async (client2, args2) => {
@@ -13213,15 +15543,15 @@ var FS_CMDS = {
         const r2 = await withRateRetry(() => client2.postEntry({ performative: "file.delete", data: { path: n.path } }), (x) => !x.ok && x.error === "rate_limited", (x) => !x.ok ? x.retry_after_s : undefined);
         if (!r2.ok)
           die6(`fs rm: ${n.path}: [${r2.error}] ${r2.detail}${r2.hint ? " — " + r2.hint : ""}`);
-        ok7(`  rm ${n.path}`);
+        ok8(`  rm ${n.path}`);
       }
-      ok7(`fs rm: ${targets.length} file(s) under ${norm}`);
+      ok8(`fs rm: ${targets.length} file(s) under ${norm}`);
       return;
     }
     const r = await withRateRetry(() => client2.postEntry({ performative: "file.delete", data: { path: repopath } }), (x) => !x.ok && x.error === "rate_limited", (x) => !x.ok ? x.retry_after_s : undefined);
     if (!r.ok)
       die6(`fs rm: [${r.error}] ${r.detail}${r.hint ? " — " + r.hint : ""}`);
-    ok7(`fs rm ${repopath}`);
+    ok8(`fs rm ${repopath}`);
   },
   edit: fsCmdEdit,
   lock: async (client2, args2) => {
@@ -13234,15 +15564,15 @@ var FS_CMDS = {
         const holder = extractLockHolder(r.detail) ?? "another participant";
         const sub2 = await subscribePathWatch(client2, repopath);
         if (!sub2.ok)
-          ok7(`fs lock: warning — watch registration failed [${sub2.error}] ${sub2.detail} — you will not be notified of conflicts`);
+          ok8(`fs lock: warning — watch registration failed [${sub2.error}] ${sub2.detail} — you will not be notified of conflicts`);
         die6(`fs lock: path '${repopath}' is locked by '${holder}' — you will be notified when it frees`);
       }
       die6(`fs lock: [${r.error}] ${r.detail}${r.hint ? " — " + r.hint : ""}`);
     }
-    ok7(`fs lock ${repopath} (seq=${r.seq})`);
+    ok8(`fs lock ${repopath} (seq=${r.seq})`);
     const sub = await subscribePathWatch(client2, repopath);
     if (!sub.ok)
-      ok7(`fs lock: warning — lock succeeded but watch registration failed [${sub.error}] ${sub.detail} — you will not be notified of conflicts`);
+      ok8(`fs lock: warning — lock succeeded but watch registration failed [${sub.error}] ${sub.detail} — you will not be notified of conflicts`);
   },
   unlock: async (client2, args2) => {
     const repopath = args2.positional[0];
@@ -13251,10 +15581,10 @@ var FS_CMDS = {
     const r = await client2.postEntry({ performative: "file.unlock", data: { path: repopath } });
     if (!r.ok)
       die6(`fs unlock: [${r.error}] ${r.detail}${r.hint ? " — " + r.hint : ""}`);
-    ok7(`fs unlock ${repopath} (seq=${r.seq})`);
+    ok8(`fs unlock ${repopath} (seq=${r.seq})`);
     await unsubscribePathWatch(client2, repopath);
   },
-  grep: async (client2, args2) => {
+  grep: async (client2, args2, senderId, origin) => {
     const query = args2.positional[0];
     if (!query)
       die6("fs grep: <query> is required");
@@ -13262,7 +15592,6 @@ var FS_CMDS = {
     const limitStr = flag6(args2, "limit");
     const limit = limitStr ? parseInt(limitStr, 10) : undefined;
     const doHydrate = flagBool4(args2, "hydrate");
-    const into = resolveWorkspaceRoot(flag6(args2, "into"), flag6(args2, "root"));
     const result = await client2.search(query, { prefix, limit });
     if ("error" in result) {
       if (result.error === "search_unavailable") {
@@ -13275,10 +15604,10 @@ var FS_CMDS = {
       process.exit(1);
     }
     if (result.results.length === 0) {
-      ok7("(no matches)");
+      ok8("(no matches)");
     } else {
       for (const r of result.results)
-        ok7(grepLine(r));
+        ok8(grepLine(r));
     }
     const skipNote = formatGrepSkipNote(result.skipped_count);
     if (skipNote)
@@ -13288,9 +15617,17 @@ var FS_CMDS = {
       return;
     if (!doHydrate)
       return;
-    const home = flag6(args2, "home");
+    const home = flag6(args2, "home") ?? meshHome();
+    const attach = resolveAndAttachRoot({ rootFlag: resolveRootFlag(flag6(args2, "into"), flag6(args2, "root")), cwd: process.cwd(), home, origin, roomId: client2.roomId });
+    if (!attach.ok)
+      die6(attach.error);
+    const { root: into, resolved } = attach;
+    if (resolved !== null && into !== resolve8(process.cwd()))
+      process.stderr.write(`root: ${into} (resolved via ${resolved.source})
+`);
+    const roomKey = roomKeyFor(origin, client2.roomId);
     const hydrateReporter = createReporter({ mode: resolveMode(false, process.stderr.isTTY ?? false) });
-    const hydrateResult = await hydrateGrepWinners(client2, result.results.map((r) => r.path), into, client2.roomId, home, hydrateReporter.sink);
+    const hydrateResult = await hydrateGrepWinners(client2, result.results.map((r) => r.path), into, client2.roomId, roomKey, home, hydrateReporter.sink);
     if (hydrateResult.hardError) {
       const e = hydrateResult.hardError;
       process.stderr.write(`fs grep --hydrate: [${e.error}]${e.detail ? " " + e.detail : ""}
@@ -13299,16 +15636,23 @@ var FS_CMDS = {
       return;
     }
     if (hydrateResult.rows.some((r) => getRowNeedsVerify(r.outcome)))
-      ok7("verify: mesh fs status");
+      ok8("verify: mesh fs status");
     process.exitCode = hydrateResult.exitCode;
   },
-  hydrate: async (client2, args2) => {
+  hydrate: async (client2, args2, senderId, origin) => {
     const prefix = args2.positional[0] ?? "";
-    const into = resolveWorkspaceRoot(flag6(args2, "into"), flag6(args2, "root"));
-    const home = flag6(args2, "home");
+    const home = flag6(args2, "home") ?? meshHome();
+    const attach = resolveAndAttachRoot({ rootFlag: resolveRootFlag(flag6(args2, "into"), flag6(args2, "root")), cwd: process.cwd(), home, origin, roomId: client2.roomId });
+    if (!attach.ok)
+      die6(attach.error);
+    const { root: into, resolved } = attach;
+    if (resolved !== null && into !== resolve8(process.cwd()))
+      process.stderr.write(`root: ${into} (resolved via ${resolved.source})
+`);
+    const roomKey = roomKeyFor(origin, client2.roomId);
     const prune = flagBool4(args2, "prune");
     const reporter = createReporter({ mode: resolveMode(false, process.stderr.isTTY ?? false) });
-    const result = await hydrateSubtree(client2, prefix, into, client2.roomId, home, prune, reporter.sink);
+    const result = await hydrateSubtree(client2, prefix, into, client2.roomId, roomKey, home, prune, reporter.sink);
     if (result.hardError) {
       const e = result.hardError;
       process.stderr.write(`fs hydrate: [${e.error}]${e.detail ? " " + e.detail : ""}
@@ -13317,12 +15661,12 @@ var FS_CMDS = {
       return;
     }
     if (result.rows.length === 0) {
-      ok7("(nothing to hydrate)");
+      ok8("(nothing to hydrate)");
       return;
     }
-    ok7(`fs hydrate: ${result.rows.length} path(s) under ${prefix || "(room root)"} → ${resolve4(into)}`);
+    ok8(`fs hydrate: ${result.rows.length} path(s) under ${prefix || "(room root)"} → ${resolve8(into)}`);
     if (result.rows.some((r) => getRowNeedsVerify(r.outcome)))
-      ok7(`verify: mesh fs status${prefix ? " " + prefix : ""}`);
+      ok8(`verify: mesh fs status${prefix ? " " + prefix : ""}`);
     process.exitCode = result.exitCode;
   },
   log: async (client2, args2) => {
@@ -13332,7 +15676,7 @@ var FS_CMDS = {
       const { entries, head } = await client2.getEntries({ limit: 100 });
       const fsEntries = entries.filter((e) => isFilePlaneEntry(e.submission.performative));
       if (fsEntries.length > 0)
-        ok7(renderEntries(fsEntries));
+        ok8(renderEntries(fsEntries));
       let senderWidth;
       if (fsEntries.length > 0) {
         const widths = fsEntries.map((e) => e.submission.sender.length);
@@ -13343,7 +15687,7 @@ var FS_CMDS = {
       if (tty)
         process.stdout.write(footer);
       else
-        ok7(footer);
+        ok8(footer);
       for await (const frame of client2.follow(since)) {
         if (frame.type === "entry" && isFilePlaneEntry(frame.entry.submission.performative)) {
           if (senderWidth === undefined) {
@@ -13353,7 +15697,7 @@ var FS_CMDS = {
           if (tty)
             printAboveFooter(line, footer);
           else
-            ok7(line);
+            ok8(line);
           since = frame.entry.seq;
         }
       }
@@ -13364,11 +15708,11 @@ var FS_CMDS = {
       const { entries, head } = await client2.getEntries({ limit: 200 });
       const fsEntries = entries.filter((e) => isFilePlaneEntry(e.submission.performative));
       if (fsEntries.length === 0) {
-        ok7("(no file-plane entries)");
+        ok8("(no file-plane entries)");
       } else {
-        ok7(renderEntries(fsEntries));
+        ok8(renderEntries(fsEntries));
       }
-      ok7(renderStateHeader(head));
+      ok8(renderStateHeader(head));
     }
   },
   grant: fsCmdGrant,
@@ -13420,13 +15764,13 @@ var FS_CMDS = {
       });
     };
     if (closure.length === 0) {
-      ok7(`${entryPath}: no out-of-entry dependencies found`);
+      ok8(`${entryPath}: no out-of-entry dependencies found`);
       return;
     }
     const flagged = flagOutOfScope(closure, canRead);
-    for (const { path: path4, readable } of flagged) {
-      const tag = readable ? "[readable]" : "[unreadable — run: mesh fs request " + path4 + "]";
-      ok7(`  ${path4}  ${tag}`);
+    for (const { path: path6, readable } of flagged) {
+      const tag = readable ? "[readable]" : "[unreadable — run: mesh fs request " + path6 + "]";
+      ok8(`  ${path6}  ${tag}`);
     }
   },
   request: async (client2, args2) => {
@@ -13439,33 +15783,41 @@ var FS_CMDS = {
     const r = await client2.postEntry({ performative: "file.request", data: { path: requestPath, grade } });
     if (!r.ok)
       die6(`fs request: [${r.error}] ${r.detail}${r.hint ? " — " + r.hint : ""}`);
-    ok7(`fs request ${grade} on ${requestPath} (seq=${r.seq})`);
+    ok8(`fs request ${grade} on ${requestPath} (seq=${r.seq})`);
   },
-  status: async (client2, args2) => {
+  status: async (client2, args2, _senderId, origin, room) => {
     const prefix = args2.positional[0] ?? "";
     const deep = flagBool4(args2, "deep");
     const porcelain = flagBool4(args2, "porcelain");
-    const home = flag6(args2, "home");
-    const root = resolve4(flag6(args2, "root") ?? ".");
-    const rows = await statusScan(client2, { prefix, root, home, deep });
+    const home = flag6(args2, "home") ?? meshHome();
+    const rootFlag = flag6(args2, "root") || undefined;
+    const resolved = resolveReadOnlyRoot({ command: "fs status", rootFlag, cwd: process.cwd(), origin, roomId: client2.roomId, home, membershipRoot: room.workspace_root });
+    const { root, roomKey, legacyAmbiguous } = resolved;
+    const rows = await statusScan(client2, { prefix, root, home, deep, roomKey, legacyAmbiguous });
     const normPrefix = prefix ? normalizeId(prefix) : "";
-    if (!porcelain)
-      ok7(`fs status: ${rows.length} path(s) under ${normPrefix || "."} (room=${client2.roomId})`);
+    if (!porcelain) {
+      ok8(`fs status: ${rows.length} path(s) under ${normPrefix || "."} (room=${client2.roomId})`);
+      if (resolved.source !== "flag" && root !== resolve8(process.cwd()))
+        process.stderr.write(`  root: ${root} (resolved via ${resolved.source})
+`);
+    }
     for (const row of rows)
-      ok7(formatStatusLine(row, { porcelain }));
+      ok8(formatStatusLine(row, { porcelain }));
     if (!porcelain) {
       const needsGet = rows.find((r) => r.state === "behind" || r.state === "diverged");
       if (needsGet)
-        ok7(`next: mesh fs get ${needsGet.path}`);
+        ok8(`next: mesh fs get ${needsGet.path}`);
     }
   },
-  diff: async (client2, args2) => {
+  diff: async (client2, args2, _senderId, origin, room) => {
     const repopath = args2.positional[0];
     if (!repopath)
       die6("fs diff: <path> is required");
     const showBase = flagBool4(args2, "base");
-    const root = resolve4(flag6(args2, "root") ?? ".");
-    const home = flag6(args2, "home");
+    const home = flag6(args2, "home") ?? meshHome();
+    const rootFlag = flag6(args2, "root") || undefined;
+    const resolved = resolveReadOnlyRoot({ command: "fs diff", rootFlag, cwd: process.cwd(), origin, roomId: client2.roomId, home, membershipRoot: room.workspace_root });
+    const { root, roomKey, legacyAmbiguous } = resolved;
     const t = await client2.getTree();
     if ("error" in t)
       die6(`fs diff: [${t.error}] ${t.detail}`);
@@ -13477,9 +15829,9 @@ var FS_CMDS = {
     const norm = normalizeId(repopath);
     let localBytes;
     try {
-      localBytes = readFileSync8(join7(root, repopath));
+      localBytes = readFileSync13(join12(root, repopath));
     } catch {
-      die6(`fs diff: no local copy at ${resolve4(root, repopath)} — run 'mesh fs get ${repopath}' first`);
+      die6(`fs diff: no local copy at ${resolve8(root, repopath)} — run 'mesh fs get ${repopath}' first`);
     }
     let hash;
     try {
@@ -13491,39 +15843,97 @@ var FS_CMDS = {
     if (!(blob instanceof Uint8Array))
       die6(`fs diff: [${blob.error}] ${blob.detail}${blob.hint ? " — " + blob.hint : ""}`);
     if (!isValidUtf8Bytes(new Uint8Array(localBytes)) || !isValidUtf8Bytes(blob)) {
-      ok7(`binary differs: ${localBytes.length}b vs ${blob.length}b`);
+      ok8(`binary differs: ${localBytes.length}b vs ${blob.length}b`);
       return;
     }
     const mineText = localBytes.toString("utf8");
     const tipText = Buffer.from(blob).toString("utf8");
-    const sidecar = readSidecar(client2.roomId, norm, home);
+    const sidecar = readSidecarResolved(root, roomKey, client2.roomId, norm, home, legacyAmbiguous);
     if (!sidecar)
-      ok7("(no sync base — comparing mine vs tip only)");
+      ok8("(no sync base — comparing mine vs tip only)");
     if (showBase && sidecar) {
       if (sidecar.content === undefined) {
-        ok7("(sidecar stores hash only — base text not cached locally; comparing mine vs tip only)");
+        ok8("(sidecar stores hash only — base text not cached locally; comparing mine vs tip only)");
       } else {
-        ok7("# base -> mine");
-        ok7(unifiedDiff(sidecar.content, mineText, "base", "mine"));
-        ok7("# base -> tip");
-        ok7(unifiedDiff(sidecar.content, tipText, "base", "tip"));
+        ok8("# base -> mine");
+        ok8(unifiedDiff(sidecar.content, mineText, "base", "mine"));
+        ok8("# base -> tip");
+        ok8(unifiedDiff(sidecar.content, tipText, "base", "tip"));
         return;
       }
     }
-    ok7(unifiedDiff(mineText, tipText, "mine", "tip"));
+    ok8(unifiedDiff(mineText, tipText, "mine", "tip"));
   }
 };
+async function cmdRooms(_args) {
+  const inventory = scanMachineInventory();
+  if (inventory.length === 0) {
+    ok8('No local identities found. Run "mesh keygen" first.');
+    return;
+  }
+  const totalMemberships = inventory.reduce((n, h2) => n + h2.memberships.length, 0);
+  if (totalMemberships === 0) {
+    ok8('No room memberships found on this machine. Run "mesh room create <name>" or "mesh join <url> <room>".');
+    return;
+  }
+  ok8("Legend: * = active room  ·  attachment = default local checkout (— = not attached)");
+  for (const h2 of [...inventory].sort((a, b) => a.label.localeCompare(b.label))) {
+    if (h2.memberships.length === 0)
+      continue;
+    ok8(`${h2.label} (${h2.identityId}):`);
+    for (const m of [...h2.memberships].sort((a, b) => a.roomId.localeCompare(b.roomId))) {
+      const mark = m.active ? "*" : " ";
+      ok8(wrapHangingIndent(`${mark} ${m.roomId}  origin=${m.origin}  attachment=${m.workspace_root ?? "—"}`));
+    }
+  }
+  if (registryIsUnreadable()) {
+    ok8(`
+(rebuilding) machine registry is unreadable — ad-hoc --home directories won't appear here until you run a mesh command in them again; default and named-profile homes are always shown by convention.`);
+  }
+}
+function wrapHangingIndent(line, indent = 4, maxWidth = 100) {
+  if (line.length <= maxWidth)
+    return line;
+  const pad = " ".repeat(indent);
+  const words = line.split(" ");
+  const out = [];
+  let current = "";
+  for (const word of words) {
+    const next = current.length === 0 ? word : `${current} ${word}`;
+    if (next.length > maxWidth && current.length > 0) {
+      out.push(current);
+      current = pad + word;
+    } else {
+      current = next;
+    }
+  }
+  if (current.length > 0)
+    out.push(current);
+  return out.join(`
+`);
+}
+function registryIsUnreadable() {
+  const p = join12(machineDir(), "registry.json");
+  if (!existsSync8(p))
+    return false;
+  try {
+    JSON.parse(readFileSync13(p, "utf8"));
+    return false;
+  } catch {
+    return true;
+  }
+}
 async function cmdFs(args2) {
   const sub = args2.positional.shift();
   const handler = sub ? FS_CMDS[sub] : undefined;
   if (!handler) {
-    die6(`usage: mesh fs put <path> [--as <repopath>] [--strict] [--prune-ignored] [--verbose] [--stop-on-error] [--json] | ls [<prefix>] [-f] [--into <dir>] | get <repopath> [--into <dir>] [--prune] [--json] | rm <repopath> | edit <path> [--into <dir>] | lock <path> | unlock <path> | grep <query> [--prefix <path-prefix>] [--limit <n>] [--hydrate [--into <dir>]] | hydrate [<prefix>] [--into <dir>] [--prune] | grant <subject> <path> <grade> | grants | revoke <subject> <path> | role <participant> <role> | roles | role-rm <participant> <role> | leases | config <open|closed> | deps <path> | request <path> [--grade read] | status [<prefix>] [--deep] [--porcelain] [--root <dir>] | diff <path> [--base] [--root <dir>]
+    die6(`usage: mesh fs put <path> [--as <repopath>] [--root <dir>] [--strict] [--prune-ignored] [--verbose] [--stop-on-error] [--json] | ls [<prefix>] [-f] [--into <dir>] | get <repopath> [--into <dir>] [--prune] [--json] | rm <repopath> | edit <path> [--into <dir>] | lock <path> | unlock <path> | grep <query> [--prefix <path-prefix>] [--limit <n>] [--hydrate [--into <dir>]] | hydrate [<prefix>] [--into <dir>] [--prune] | grant <subject> <path> <grade> | grants | revoke <subject> <path> | role <participant> <role> | roles | role-rm <participant> <role> | leases | config <open|closed> | deps <path> | request <path> [--grade read] | status [<prefix>] [--deep] [--porcelain] [--root <dir>] | diff <path> [--base] [--root <dir>]
   write policy by extension: code (.ts .js .py .go .rs …) -> merge on \`put\` · prose (.md .txt) -> shared CRDT via \`edit\` · opt-in serialize: \`lock\`/\`unlock\`
   grades: discover < read < write < exclusive`);
   }
   const home = flag6(args2, "home");
   const roomArg = flag6(args2, "room");
-  const { roomId, entry: room } = resolveRoom(roomArg, home);
+  const { roomId, entry: room } = resolveRoom(roomArg, home, flag6(args2, "url"));
   const identity = loadIdentityWithSecret(home);
   if (!identity)
     die6('No identity. Run "mesh keygen" first.');
@@ -13534,13 +15944,14 @@ async function cmdFs(args2) {
     roomId,
     secretBytes: identity.secretBytes
   });
-  await handler(client2, args2, identity.id);
+  const origin = normalizeOrigin(room.url);
+  await handler(client2, args2, identity.id, origin, room);
 }
 async function cmdDecide(args2) {
   const sub = args2.positional.shift();
   const home = flag6(args2, "home");
   const roomArg = flag6(args2, "room");
-  const { roomId, entry: room } = resolveRoom(roomArg, home);
+  const { roomId, entry: room } = resolveRoom(roomArg, home, flag6(args2, "url"));
   const identity = loadIdentityWithSecret(home);
   if (!identity)
     die6('No identity. Run "mesh keygen" first.');
@@ -13563,9 +15974,10 @@ function claimStateMarkers(claim, selfId, nowMs) {
   return `${stalled}${rejected}`;
 }
 async function cmdDoctor(args2) {
-  const home = flag6(args2, "home");
+  const home = flag6(args2, "home") ?? meshHome();
   const roomArg = flag6(args2, "room");
-  const { roomId, entry: room } = resolveRoom(roomArg, home);
+  const urlFlag = flag6(args2, "url");
+  const { roomId, entry: room } = resolveRoom(roomArg, home, urlFlag);
   const identity = loadIdentityWithSecret(home);
   if (!identity)
     die6('No identity. Run "mesh keygen" first.');
@@ -13576,13 +15988,18 @@ async function cmdDoctor(args2) {
     roomId,
     secretBytes: identity.secretBytes
   });
-  const root = resolve4(flag6(args2, "root") ?? ".");
-  await runDoctor(client2, args2, { root, home });
+  const origin = normalizeOrigin(room.url);
+  const rootFlag = flag6(args2, "root") || undefined;
+  const resolved = resolveReadOnlyRoot({ command: "mesh doctor", rootFlag, cwd: process.cwd(), origin, roomId, home, membershipRoot: room.workspace_root });
+  if (resolved.source !== "flag" && resolved.root !== resolve8(process.cwd()))
+    process.stderr.write(`root: ${resolved.root} (resolved via ${resolved.source})
+`);
+  await runDoctor(client2, args2, { root: resolved.root, home, roomKey: resolved.roomKey, legacyAmbiguous: resolved.legacyAmbiguous });
 }
 async function cmdState(args2) {
   const home = flag6(args2, "home");
   const roomArg = flag6(args2, "room");
-  const { roomId, entry: room } = resolveRoom(roomArg, home);
+  const { roomId, entry: room } = resolveRoom(roomArg, home, flag6(args2, "url"));
   const identity = loadIdentityWithSecret(home);
   if (!identity)
     die6('No identity. Run "mesh keygen" first.');
@@ -13594,21 +16011,21 @@ async function cmdState(args2) {
     secretBytes: identity.secretBytes
   });
   const state = await client2.getState();
-  ok7(renderStateHeader(state.head));
-  ok7("");
-  ok7("Claims:");
+  ok8(renderStateHeader(state.head));
+  ok8("");
+  ok8("Claims:");
   if (state.claims.length === 0) {
-    ok7("  (none)");
+    ok8("  (none)");
   } else {
     for (const claim of state.claims) {
       const holder = claim.holder ? `  holder=${claim.holder}` : "";
       const lease = claim.lease_expires ? `  lease=${claim.lease_expires}` : "";
       const markers = claimStateMarkers(claim, identity.id, Date.now());
-      ok7(`  ${claim.task_ref}  ${claim.state}${holder}${lease}${markers}`);
+      ok8(`  ${claim.task_ref}  ${claim.state}${holder}${lease}${markers}`);
     }
   }
-  ok7("");
-  ok7("Roster:");
+  ok8("");
+  ok8("Roster:");
   const rosterRows = state.roster.map((p) => ({
     participant_id: p.participant_id,
     roles: p.roles,
@@ -13622,15 +16039,15 @@ async function cmdState(args2) {
     retired_seq: p.retired_seq,
     pubkey: p.pubkey
   }));
-  ok7(renderRoster(rosterRows));
-  ok7("");
-  ok7("Bindings:");
+  ok8(renderRoster(rosterRows));
+  ok8("");
+  ok8("Bindings:");
   const stateBindings = state.bindings ?? [];
   if (stateBindings.length === 0) {
-    ok7("  (none)");
+    ok8("  (none)");
   } else {
     for (const b of stateBindings) {
-      ok7(`  ${scrubControl(b.participant)}  ${scrubControl(b.role)}  ${fmtWindow(b.active_from, b.active_until)}  in_window=${b.in_window}`);
+      ok8(`  ${scrubControl(b.participant)}  ${scrubControl(b.role)}  ${fmtWindow(b.active_from, b.active_until)}  in_window=${b.in_window}`);
     }
   }
 }
@@ -13646,7 +16063,7 @@ function buildWatchPredicate(args2) {
     const perf = flag6(args2, "performative");
     const thread = flag6(args2, "thread");
     const mentionMe = flagBool4(args2, "mention-me");
-    const path4 = flag6(args2, "path");
+    const path6 = flag6(args2, "path");
     const participant = flag6(args2, "participant");
     const taskRef = flag6(args2, "task-ref");
     return {
@@ -13654,7 +16071,7 @@ function buildWatchPredicate(args2) {
       ...perf !== undefined ? { performative: perf } : {},
       ...thread !== undefined ? { thread } : {},
       ...mentionMe ? { mention_me: true } : {},
-      ...path4 !== undefined ? { path: path4 } : {},
+      ...path6 !== undefined ? { path: path6 } : {},
       ...participant !== undefined ? { participant } : {},
       ...taskRef !== undefined ? { task_ref: taskRef } : {}
     };
@@ -13664,7 +16081,7 @@ function buildWatchPredicate(args2) {
 async function cmdWatch(args2) {
   const home = flag6(args2, "home");
   const roomArg = flag6(args2, "room");
-  const { roomId, entry: room } = resolveRoom(roomArg, home);
+  const { roomId, entry: room } = resolveRoom(roomArg, home, flag6(args2, "url"));
   const identity = loadIdentityWithSecret(home);
   if (!identity)
     die6('No identity. Run "mesh keygen" first.');
@@ -13679,7 +16096,7 @@ async function cmdWatch(args2) {
   const result = await client2.postWatch(predicate);
   if (!result.ok)
     die6(`watch failed: [${result.error}] ${result.detail}`);
-  ok7(`Watch registered: ${result.watch_id}`);
+  ok8(`Watch registered: ${result.watch_id}`);
 }
 async function cmdWhoami(args2) {
   const home = flag6(args2, "home");
@@ -13687,17 +16104,17 @@ async function cmdWhoami(args2) {
   if (!identity)
     die6('No identity. Run "mesh keygen --id <id>" first.');
   const h2 = home ?? meshHome();
-  ok7(`id:     ${identity.id}`);
-  ok7(`pubkey: ${identity.pubkey}`);
+  ok8(`id:     ${identity.id}`);
+  ok8(`pubkey: ${identity.pubkey}`);
   if (identity.roles && identity.roles.length > 0)
-    ok7(`roles:  ${identity.roles.join(", ")}`);
-  ok7(`home:   ${h2}  (config dir — set MESH_HOME or --home to change)`);
-  ok7(`        holds identity.json · rooms.json · active_room`);
+    ok8(`roles:  ${identity.roles.join(", ")}`);
+  ok8(`home:   ${h2}  (config dir — set MESH_HOME or --home to change)`);
+  ok8(`        holds identity.json · rooms.json · active_room`);
   const rooms = loadRooms(home);
-  const roomIds = Object.keys(rooms);
+  const roomIds = Object.keys(rooms.memberships).map((k) => roomIdFromRoomKey(k));
   if (roomIds.length > 0) {
     const active = getActiveRoom(home);
-    ok7(`rooms:  ${roomIds.map((r) => r === active ? `${r} (active)` : r).join(", ")}`);
+    ok8(`rooms:  ${roomIds.map((r) => r === active ? `${r} (active)` : r).join(", ")}`);
   }
 }
 async function cmdInbox(args2) {
@@ -13705,7 +16122,7 @@ async function cmdInbox(args2) {
   const mark = flagBool4(args2, "mark");
   const home = flag6(args2, "home");
   const roomArg = flag6(args2, "room");
-  const { roomId, entry: room } = resolveRoom(roomArg, home);
+  const { roomId, entry: room } = resolveRoom(roomArg, home, flag6(args2, "url"));
   const identity = loadIdentityWithSecret(home);
   if (!identity)
     die6('No identity. Run "mesh keygen" first.');
@@ -13721,17 +16138,17 @@ async function cmdInbox(args2) {
     opts.since = parseInt(sinceStr, 10);
   const [result, state] = await Promise.all([client2.getEntries(opts), client2.getState().catch(() => null)]);
   if (result.entries.length === 0 && result.notifies.length === 0) {
-    ok7("(inbox empty)");
+    ok8("(inbox empty)");
   } else {
     if (result.entries.length > 0)
-      ok7(renderInboxDigest(result.entries));
+      ok8(renderInboxDigest(result.entries));
     for (const n of result.notifies) {
-      ok7(`  notify  watch=${n.watch_id}  entry_seq=${n.entry_seq}`);
+      ok8(`  notify  watch=${n.watch_id}  entry_seq=${n.entry_seq}`);
     }
   }
-  ok7(renderStateHeader(result.head));
+  ok8(renderStateHeader(result.head));
   if (mark)
-    ok7("(read cursor advanced)");
+    ok8("(read cursor advanced)");
   const badge = composeBadge({
     unread: result.entries.length,
     fsBehind: 0,
@@ -13739,7 +16156,7 @@ async function cmdInbox(args2) {
     openDecisions: state !== null ? openDecisionsCount(state, identity.id) : 0
   });
   if (badge !== null)
-    ok7(badge);
+    ok8(badge);
   process.exitCode = inboxExitCode(result.entries.length, result.notifies.length);
 }
 function inboxExitCode(entryCount, notifyCount) {
@@ -13769,12 +16186,14 @@ room:
   room rm <room_id>                                         Forget a room locally (not a server delete)
   room delete <room_id>                                     Delete the room on the server (owner only)
   room log [-f]                                             Alias for log
+  rooms                                                     Machine-wide inventory: every profile × room membership, offline (Intent T)
     aliases: create-room → room create · join → room join
 
 messaging:
   log [-f] [--all]                                          Show room log — collab lane by default (file.* / system.* entries hidden; use --all for the full log, or 'fs log' for the file plane). -f: follow
   chat                                                      Live stream + interactive post
   open [--read-only] [--print]                              Open the room's web view in a browser (write link signs as your identity; --read-only omits the key)
+  ui [--port <n>] [--profile <name>] [--print] [--no-open]  Launch the local multiroom manager: a loopback-only broker + browser SPA over every membership on this machine
   post <body> [--body <s>] [--thread <t>]                   Post a request entry (--body is the non-positional form)
 
 tasks:
@@ -13793,7 +16212,7 @@ tasks:
             [--mention-me] [--path <p>] [--participant <id>] [--task-ref <ref>]
 
 files:
-  (workspace root = cwd by default, --root <dir> overrides, --into <dir> stays for one-off scratch staging; identity = normalizeId(path) relative to that root, same in the room tree)
+  (workspace root = cwd by default; --root/--into <dir> attach it here on FIRST use and become the durable default for this room from then on — pass --root/--into again to change it; identity = normalizeId(path) relative to that root, same in the room tree)
   fs put <path|dir> [--as <repopath>] [--all] [--strict] [--prune-ignored] [--verbose|-v] [--stop-on-error] [--json]  Upload a file or directory (.meshignore excludes, --all includes hidden; --strict aborts on sync conflicts; --prune-ignored evicts room copies of paths .meshignore newly excludes, via file.delete). Streams a live progress line by default (in place on a TTY, throttled lines when captured), then a metrics summary — \`fs put done: … [exit N]\` — plus per-file lines only for outcomes needing attention. --verbose/-v lists every file; an oversized file fails the whole batch up front (client-side preflight against the room's artifact cap, names every offending file, before any upload), a server-rejected file mid-batch is skipped and reported, --stop-on-error aborts at the first failure; --json streams NDJSON.
   fs ls [<prefix>] [-f] [--into <dir>|--root <dir>]         List the shared workspace tree (-f: live view — tree, leases, hydration); local column compares against the workspace root
   fs get <repopath|prefix> [--into <dir>|--root <dir>] [--prune] [--json] Hydrate a file/subtree (streams a live progress line by default); --prune drops local copies the room cleanly deleted; --json streams NDJSON progress
@@ -13847,10 +16266,10 @@ function usageText() {
   return USAGE;
 }
 function usage() {
-  ok7(USAGE);
+  ok8(USAGE);
 }
 function expandHome(p) {
-  return p.startsWith("~/") ? os3.homedir() + p.slice(1) : p;
+  return p.startsWith("~/") ? os5.homedir() + p.slice(1) : p;
 }
 async function cmdIdentity(args2) {
   const sub = args2.positional.shift();
@@ -13866,7 +16285,7 @@ async function cmdIdentity(args2) {
 function cmdIdentityList() {
   const homes = listIdentityHomes();
   if (homes.length === 0) {
-    ok7('No identities under ~/.mesh*. Run "mesh keygen --id <id>".');
+    ok8('No identities under ~/.mesh*. Run "mesh keygen --id <id>".');
     return;
   }
   const current = process.env["MESH_HOME"] ?? meshHome();
@@ -13876,19 +16295,19 @@ function cmdIdentityList() {
     set.add(identity.pubkey);
     keysById.set(identity.id, set);
   }
-  ok7(`Local identities (~/.mesh*) — current MESH_HOME: ${current}`);
+  ok8(`Local identities (~/.mesh*) — current MESH_HOME: ${current}`);
   for (const { home, identity } of homes) {
     const mark = home === current ? "*" : " ";
     const dupe = (keysById.get(identity.id)?.size ?? 1) > 1 ? "  ⚠ id reused with a different key" : "";
-    ok7(`${mark} ${home}`);
-    ok7(`    ${identity.id}  ${identity.pubkey}${dupe}`);
+    ok8(`${mark} ${home}`);
+    ok8(`    ${identity.id}  ${identity.pubkey}${dupe}`);
   }
   const collided = [...keysById.entries()].filter(([, s]) => s.size > 1).map(([id2]) => id2);
   if (collided.length > 0) {
-    ok7(``);
-    ok7(`⚠ Same id, different keypairs: ${collided.join(", ")}. A room trusts only the FIRST key an id`);
-    ok7(`  used (trust-on-first-use); the others hit id_taken on join. Reconcile into one identity:`);
-    ok7(`    mesh identity copy --from <home-that-owns-the-room> --to <other-home> --force`);
+    ok8(``);
+    ok8(`⚠ Same id, different keypairs: ${collided.join(", ")}. A room trusts only the FIRST key an id`);
+    ok8(`  used (trust-on-first-use); the others hit id_taken on join. Reconcile into one identity:`);
+    ok8(`    mesh identity copy --from <home-that-owns-the-room> --to <other-home> --force`);
   }
 }
 async function cmdIdentityCopy(args2) {
@@ -13908,10 +16327,10 @@ async function cmdIdentityCopy(args2) {
     die6(`identity copy: ${to} already has identity "${dst.id}" (${dst.pubkey}). Use --force to overwrite.`);
   }
   saveIdentity(src, to);
-  ok7(`Copied identity → ${to}`);
-  ok7(`  ${src.id}  ${src.pubkey}`);
-  ok7(`Both homes now share ONE keypair (local-testing only — they are now the SAME participant,`);
-  ok7(`not isolated agents). Use separate keygen'd identities for anything real.`);
+  ok8(`Copied identity → ${to}`);
+  ok8(`  ${src.id}  ${src.pubkey}`);
+  ok8(`Both homes now share ONE keypair (local-testing only — they are now the SAME participant,`);
+  ok8(`not isolated agents). Use separate keygen'd identities for anything real.`);
 }
 async function main() {
   const argv = process.argv.slice(2);
@@ -13920,7 +16339,7 @@ async function main() {
     return;
   }
   if (wantsVersion(argv)) {
-    ok7(`mesh v${getVersion()}`);
+    ok8(`mesh v${getVersion()}`);
     return;
   }
   const args2 = parseArgs(argv, FLAG_ARITY);
@@ -13946,12 +16365,16 @@ async function main() {
       return cmdJoin(args2);
     case "room":
       return cmdRoom(args2);
+    case "rooms":
+      return cmdRooms(args2);
     case "log":
       return cmdLog(args2);
     case "chat":
       return cmdChat(args2);
     case "open":
       return cmdOpen(args2);
+    case "ui":
+      return cmdUi(args2);
     case "post":
       return cmdPost(args2);
     case "announce":
@@ -13993,14 +16416,14 @@ async function main() {
     case "doctor":
       return cmdDoctor(args2);
     case "version":
-      ok7(`mesh v${getVersion()}`);
+      ok8(`mesh v${getVersion()}`);
       return;
     case "use": {
       const name = args2.positional.shift();
       if (!name)
         die6("use: <profile-name> is required");
       setActiveProfile(name);
-      ok7(`Active profile set to "${name}".`);
+      ok8(`Active profile set to "${name}".`);
       return;
     }
     case "profile": {
@@ -14008,12 +16431,12 @@ async function main() {
       if (sub === "list") {
         const profiles = listProfiles();
         if (profiles.length === 0) {
-          ok7("No profiles. Create one with: mesh use <name>");
+          ok8("No profiles. Create one with: mesh use <name>");
           return;
         }
         const active = getActiveProfile();
         for (const p of profiles)
-          ok7(`${p === active ? "*" : " "} ${p}`);
+          ok8(`${p === active ? "*" : " "} ${p}`);
         return;
       }
       die6(`profile: unknown subcommand "${sub ?? ""}". Available: list`);
@@ -14041,9 +16464,10 @@ export {
   wantsVersion,
   wantsHelp,
   usageText,
-  statusScan,
   runDeliver,
   runAck,
+  resolvePutRepoPath,
+  resolvePutDirPrefix,
   resolveLogExclude,
   resolveFetchRef,
   resolveDeliverMode,
@@ -14064,7 +16488,12 @@ export {
   extractInviteSecret,
   collectAllEntries,
   collabLaneHint,
+  cmdRooms,
+  cmdRoomRm,
+  cmdRoom,
   cmdFs,
+  cmdDoctor,
+  cmdCreateRoom,
   claimStateMarkers,
   buildWatchPredicate,
   artifactCapExceededMessage,

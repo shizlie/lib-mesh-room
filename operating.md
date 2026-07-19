@@ -1279,6 +1279,67 @@ titled block per non-empty category.
 
 ---
 
+## Machine inventory (`mesh rooms`)
+
+`mesh rooms` (Intent T — "the machine knows its rooms") prints every room
+membership across every local profile/identity home, offline, grouped under
+the identity that holds it. Each row shows the room id, its origin, and the
+membership's default workspace attachment (`—` when none); `*` marks that
+home's active room. It reads the SLIM per-OS-user registry
+(`~/.mesh/machine/registry.json` — home paths and live daemons only, never
+credentials) plus each home's own `rooms.json`, which `mesh room
+create/join/rm/delete` and the mutating `fs` verbs populate ambiently. A
+corrupt or missing registry still finds default and named-profile homes by
+convention; only ad-hoc `--home` homes go missing until their next use, and
+the output says so rather than pretending completeness. This is the same
+inventory the `mesh ui` sidebar renders.
+
+---
+
+## Local manager (`mesh ui`)
+
+`mesh ui [--port <n>] [--profile <name>] [--print] [--no-open]` starts a
+`node:http` broker bound to `127.0.0.1` and serves its same-origin manager SPA.
+The manager inventories every room membership in the machine registry, grouped
+by profile and identity, while showing one unmistakable acting identity at a
+time. `--profile` initially selects that profile's active membership, or its
+first membership when none is active; it never filters the machine-wide list.
+
+```sh
+mesh ui                    # start on an ephemeral port and open the browser
+mesh ui --print            # print only the one-time launch URL; do not open a browser
+mesh ui --no-open          # print the listening address and launch URL; do not open a browser
+mesh ui --port 4123        # pin the port instead of choosing an ephemeral one
+mesh ui --profile work     # initially select work's active/first membership; keep every profile listed
+```
+
+The **Room** pane shows the selected membership's remote file tree, live
+conversation, and composer using the same `@mesh/web-core` rendering layer as
+the single-room page. The broker resolves that exact origin-qualified
+membership and signs posts with its local identity; the browser never receives
+an identity key, room bearer token, or join secret. The **Local workspace**
+pane renders the same sync classification and glyphs as `mesh fs status`
+(`Workspace clean — no differing paths` when nothing differs). Its **Daemon**
+card reports persisted registration and liveness, wake cursor, pending wake,
+and hook state when a daemon is registered. Room switching stops the previous
+feed and stale local requests. Membership rows are real buttons, grouped by
+identity, with roving arrow-key focus and `aria-current` selection.
+
+The launch URL carries a one-time token in its fragment. The SPA exchanges it
+for an in-memory `HttpOnly`/`SameSite=Strict` session cookie, then removes the
+fragment; Host, Origin, `X-Mesh-UI`, and cookie checks guard the API. Any API
+`401` replaces all panes with `Session ended — run mesh ui again.` Relaunch the
+command to recover. Because the broker listens only on loopback, off-machine
+access is impossible. The one-time launch-token/session exchange protects
+localhost access; same-machine process or URL snooping is outside the current
+threat model.
+
+The manager is read-only for files and cannot join or create rooms. It does not
+replace `mesh open`: that command still opens the unchanged single-room Worker
+page, including its existing `#k=` fragment flow. Both browser surfaces coexist.
+
+---
+
 ## Security model & v1 limitations
 
 mesh's integrity rests on signatures + the hash chain: every entry is Ed25519-signed by

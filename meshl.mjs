@@ -9907,7 +9907,7 @@ var require_compile = __commonJS((exports) => {
     const schOrFunc = root.refs[ref];
     if (schOrFunc)
       return schOrFunc;
-    let _sch = resolve2.call(this, root, ref);
+    let _sch = resolve4.call(this, root, ref);
     if (_sch === undefined) {
       const schema = (_a2 = root.localRefs) === null || _a2 === undefined ? undefined : _a2[ref];
       const { schemaId } = this.opts;
@@ -9934,7 +9934,7 @@ var require_compile = __commonJS((exports) => {
   function sameSchemaEnv(s1, s2) {
     return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
   }
-  function resolve2(root, ref) {
+  function resolve4(root, ref) {
     let sch;
     while (typeof (sch = this.refs[ref]) == "string")
       ref = sch;
@@ -10148,8 +10148,8 @@ var require_utils = __commonJS((exports, module) => {
     }
     return ind;
   }
-  function removeDotSegments(path4) {
-    let input = path4;
+  function removeDotSegments(path6) {
+    let input = path6;
     const output = [];
     let nextSlash = -1;
     let len = 0;
@@ -10392,8 +10392,8 @@ var require_schemes = __commonJS((exports, module) => {
       wsComponent.secure = undefined;
     }
     if (wsComponent.resourceName) {
-      const [path4, query] = wsComponent.resourceName.split("?");
-      wsComponent.path = path4 && path4 !== "/" ? path4 : undefined;
+      const [path6, query] = wsComponent.resourceName.split("?");
+      wsComponent.path = path6 && path6 !== "/" ? path6 : undefined;
       wsComponent.query = query;
       wsComponent.resourceName = undefined;
     }
@@ -10520,7 +10520,7 @@ var require_fast_uri = __commonJS((exports, module) => {
     }
     return uri;
   }
-  function resolve2(baseURI, relativeURI, options) {
+  function resolve4(baseURI, relativeURI, options) {
     const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
     const resolved = resolveComponent(parse6(baseURI, schemelessOptions), parse6(relativeURI, schemelessOptions), schemelessOptions, true);
     schemelessOptions.skipEscape = true;
@@ -10779,7 +10779,7 @@ var require_fast_uri = __commonJS((exports, module) => {
   var fastUri = {
     SCHEMES,
     normalize,
-    resolve: resolve2,
+    resolve: resolve4,
     resolveComponent,
     equal,
     serialize,
@@ -13568,12 +13568,12 @@ var require_dist = __commonJS((exports, module) => {
       throw new Error(`Unknown format "${name}"`);
     return f;
   };
-  function addFormats(ajv, list, fs4, exportName) {
+  function addFormats(ajv, list, fs6, exportName) {
     var _a2;
     var _b;
     (_a2 = (_b = ajv.opts.code).formats) !== null && _a2 !== undefined || (_b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`);
     for (const f of list)
-      ajv.addFormat(f, fs4[f]);
+      ajv.addFormat(f, fs6[f]);
   }
   module.exports = exports = formatsPlugin;
   Object.defineProperty(exports, "__esModule", { value: true });
@@ -13581,10 +13581,9 @@ var require_dist = __commonJS((exports, module) => {
 });
 
 // src/main.ts
-import { readFileSync as readFileSync10, existsSync as existsSync7, statSync as statSync4 } from "node:fs";
-import { mkdirSync as mkdirSync4, openSync, writeFileSync as writeFileSync6, rmSync as rmSync4, realpathSync as realpathSync2 } from "node:fs";
-import { join as join9, resolve as resolve3 } from "node:path";
-import { homedir as homedir2 } from "node:os";
+import { readFileSync as readFileSync12, existsSync as existsSync9, statSync as statSync4 } from "node:fs";
+import { mkdirSync as mkdirSync6, openSync, writeFileSync as writeFileSync8, rmSync as rmSync6, realpathSync as realpathSync2 } from "node:fs";
+import { join as join12 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 import { spawn } from "node:child_process";
 
@@ -13841,6 +13840,12 @@ function validateConfig(raw) {
   if (typeof ri["key"] !== "string")
     throw new ConfigError("identity.key is required (string)");
   const identity2 = { id: ri["id"], key: ri["key"] };
+  let home;
+  if (r["home"] !== undefined) {
+    if (typeof r["home"] !== "string")
+      throw new ConfigError("home must be a string");
+    home = r["home"];
+  }
   if (!isObj(r["room"]))
     throw new ConfigError("room is required and must be a mapping");
   const rr = r["room"];
@@ -13921,7 +13926,7 @@ function validateConfig(raw) {
       attention.derived = ra["derived"];
     }
   }
-  const workspace = { root: "." };
+  const workspace = {};
   if (r["workspace"] !== undefined) {
     if (!isObj(r["workspace"]))
       throw new ConfigError("workspace must be a mapping");
@@ -13966,7 +13971,7 @@ function validateConfig(raw) {
   }
   if (typeof r["state_dir"] !== "string")
     throw new ConfigError("state_dir is required (string)");
-  return { identity: identity2, room, subscriptions, gate, wake, heartbeat, liveness, brief, consume, attention, workspace, workset, prefetch, state_dir: r["state_dir"] };
+  return { identity: identity2, room, subscriptions, gate, wake, heartbeat, liveness, brief, consume, attention, workspace, workset, prefetch, state_dir: r["state_dir"], home };
 }
 function loadConfig(path) {
   let text;
@@ -15939,8 +15944,8 @@ function checkLivenessCadence(cfg) {
 }
 
 // src/reanchor.ts
-import { existsSync as existsSync3, readFileSync as readFileSync5, writeFileSync as writeFileSync3 } from "node:fs";
-import { join as join5 } from "node:path";
+import { existsSync as existsSync5, readFileSync as readFileSync7, writeFileSync as writeFileSync5 } from "node:fs";
+import { join as join7 } from "node:path";
 
 // src/injectors/tmux.ts
 import { execFile } from "node:child_process";
@@ -16564,6 +16569,45 @@ function readSidecar(roomId, repopath, home) {
   }
 }
 
+// ../engine/src/folder-lineage.ts
+import * as fs2 from "node:fs";
+import * as path3 from "node:path";
+var FOLDER_STATE_DIR = ".mesh";
+function assertNoTraversal(label, raw) {
+  let decoded;
+  try {
+    decoded = decodeURIComponent(raw);
+  } catch {
+    decoded = raw;
+  }
+  if (decoded === "." || decoded === ".." || decoded.split(/[/\\]/).some((seg) => seg === "..")) {
+    throw new Error(`folder-lineage: illegal ${label} "${raw}"`);
+  }
+}
+function folderSidecarPath(root, roomKey, repopath) {
+  assertNoTraversal("roomKey", roomKey);
+  assertNoTraversal("repopath", repopath);
+  return path3.join(root, FOLDER_STATE_DIR, "lineage", roomKey, encodeURIComponent(repopath));
+}
+function readFolderSidecar(root, roomKey, repopath) {
+  const p = folderSidecarPath(root, roomKey, repopath);
+  if (!fs2.existsSync(p))
+    return;
+  try {
+    return JSON.parse(fs2.readFileSync(p, "utf8"));
+  } catch {
+    return;
+  }
+}
+function readSidecarResolved(root, roomKey, roomId, repopath, home, legacyAmbiguous) {
+  const folder = readFolderSidecar(root, roomKey, repopath);
+  if (folder !== undefined)
+    return folder;
+  if (legacyAmbiguous)
+    return;
+  return readSidecar(roomId, repopath, home);
+}
+
 // ../engine/src/sync.ts
 function classifySync(input) {
   if (input.tipGated)
@@ -16621,29 +16665,29 @@ class WorkspaceCache {
     this._idleTtlMs = opts?.idleTtlMs ?? DEFAULT_IDLE_TTL_MS;
     this._mirror = opts?.mirror;
   }
-  async read(path3) {
+  async read(path4) {
     let treeHash;
     if (this._mirror !== undefined) {
-      const node = this._mirror.get(path3);
+      const node = this._mirror.get(path4);
       if (node === undefined) {
-        throw new Error(`WorkspaceCache.read: path "${path3}" not found in room tree`);
+        throw new Error(`WorkspaceCache.read: path "${path4}" not found in room tree`);
       }
       treeHash = node.content_hash;
     } else {
-      const treeResult = await this._client.getTree(path3);
+      const treeResult = await this._client.getTree(path4);
       if (!("tree" in treeResult)) {
-        throw new Error(`WorkspaceCache.read: getTree failed for path "${path3}": ${treeResult.error}`);
+        throw new Error(`WorkspaceCache.read: getTree failed for path "${path4}": ${treeResult.error}`);
       }
-      const node = resolveNode(treeResult.tree, path3);
+      const node = resolveNode(treeResult.tree, path4);
       if (node === undefined) {
-        throw new Error(`WorkspaceCache.read: path "${path3}" not found in room tree`);
+        throw new Error(`WorkspaceCache.read: path "${path4}" not found in room tree`);
       }
       treeHash = node.content_hash;
     }
     if (treeHash === undefined) {
-      throw new Error(`WorkspaceCache.read: path "${path3}" is content-gated (no read grant) — cannot hydrate`);
+      throw new Error(`WorkspaceCache.read: path "${path4}" is content-gated (no read grant) — cannot hydrate`);
     }
-    const existing = this._entries.get(path3);
+    const existing = this._entries.get(path4);
     if (isCacheFresh(existing?.hash, treeHash)) {
       existing.atime = Date.now();
       return existing.bytes;
@@ -16651,36 +16695,36 @@ class WorkspaceCache {
     const rawHash = hashFromRef(treeHash);
     const blobResult = await this._client.getArtifact(rawHash);
     if (!(blobResult instanceof Uint8Array)) {
-      throw new Error(`WorkspaceCache.read: getArtifact failed for "${path3}" (hash ${rawHash}): ${blobResult.error}`);
+      throw new Error(`WorkspaceCache.read: getArtifact failed for "${path4}" (hash ${rawHash}): ${blobResult.error}`);
     }
     if (existing !== undefined) {
       this._totalBytes -= existing.bytes.byteLength;
-      this._entries.delete(path3);
+      this._entries.delete(path4);
     }
     const entry = { hash: treeHash, bytes: blobResult, atime: Date.now() };
-    this._entries.set(path3, entry);
+    this._entries.set(path4, entry);
     this._totalBytes += blobResult.byteLength;
     this._evict();
     return blobResult;
   }
-  isWarm(path3, hash) {
-    return this._entries.get(path3)?.hash === hash;
+  isWarm(path4, hash) {
+    return this._entries.get(path4)?.hash === hash;
   }
-  async warm(path3, hash) {
-    if (this.isWarm(path3, hash))
+  async warm(path4, hash) {
+    if (this.isWarm(path4, hash))
       return;
     const rawHash = hashFromRef(hash);
     const blobResult = await this._client.getArtifact(rawHash);
     if (!(blobResult instanceof Uint8Array)) {
-      throw new Error(`WorkspaceCache.warm: getArtifact failed for "${path3}" (hash ${rawHash}): ${blobResult.error}`);
+      throw new Error(`WorkspaceCache.warm: getArtifact failed for "${path4}" (hash ${rawHash}): ${blobResult.error}`);
     }
-    const existing = this._entries.get(path3);
+    const existing = this._entries.get(path4);
     if (existing !== undefined) {
       this._totalBytes -= existing.bytes.byteLength;
-      this._entries.delete(path3);
+      this._entries.delete(path4);
     }
     const entry = { hash, bytes: blobResult, atime: Date.now() };
-    this._entries.set(path3, entry);
+    this._entries.set(path4, entry);
     this._totalBytes += blobResult.byteLength;
     this._evict();
   }
@@ -16705,10 +16749,10 @@ class WorkspaceCache {
   }
   _evict() {
     const now = Date.now();
-    for (const [path3, entry] of this._entries) {
+    for (const [path4, entry] of this._entries) {
       if (now - entry.atime > this._idleTtlMs) {
         this._totalBytes -= entry.bytes.byteLength;
-        this._entries.delete(path3);
+        this._entries.delete(path4);
       }
     }
     while (this._totalBytes > this._maxBytes && this._entries.size > 0) {
@@ -16778,27 +16822,201 @@ class TreeMirror {
     this._headSeq = entry.seq;
     return true;
   }
-  get(path3) {
-    return this._nodes.get(normalizeId(path3));
+  get(path4) {
+    return this._nodes.get(normalizeId(path4));
   }
   getAllPaths() {
     return [...this._nodes.keys()];
   }
 }
-// ../cli/src/config.ts
+// ../engine/src/machine-registry.ts
 import * as fs3 from "node:fs";
-import * as path3 from "node:path";
-function loadRooms(home) {
-  const p = path3.join(home ?? meshHome(), "rooms.json");
-  if (!fs3.existsSync(p))
-    return {};
-  try {
-    fs3.chmodSync(p, 384);
-  } catch {}
-  return JSON.parse(fs3.readFileSync(p, "utf8"));
+import * as path4 from "node:path";
+import * as os2 from "node:os";
+function machineDir() {
+  return process.env["MESH_MACHINE_DIR"] ?? path4.join(os2.homedir(), ".mesh", "machine");
 }
-function getRoom(roomId, home) {
-  return loadRooms(home)[roomId] ?? null;
+function roomKeyFor(origin, roomId) {
+  return encodeURIComponent(origin) + "#" + encodeURIComponent(roomId);
+}
+function parseRoomKey(roomKey) {
+  const sep = roomKey.indexOf("#");
+  if (sep < 0)
+    return null;
+  try {
+    return { origin: decodeURIComponent(roomKey.slice(0, sep)), roomId: decodeURIComponent(roomKey.slice(sep + 1)) };
+  } catch {
+    return null;
+  }
+}
+function normalizeOrigin(url) {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return url;
+  }
+}
+function registryPath(dir) {
+  return path4.join(dir ?? machineDir(), "registry.json");
+}
+function loadMachineRegistry(dir) {
+  const p = registryPath(dir);
+  if (!fs3.existsSync(p))
+    return { v: 1, homes: [], daemons: {} };
+  try {
+    const raw = JSON.parse(fs3.readFileSync(p, "utf8"));
+    return {
+      v: 1,
+      homes: Array.isArray(raw.homes) ? raw.homes : [],
+      daemons: raw.daemons && typeof raw.daemons === "object" ? raw.daemons : {}
+    };
+  } catch {
+    return { v: 1, homes: [], daemons: {} };
+  }
+}
+function writeRegistry(dir, registry) {
+  const targetDir = dir ?? machineDir();
+  fs3.mkdirSync(targetDir, { recursive: true, mode: 448 });
+  const finalPath = registryPath(dir);
+  const tmpPath = path4.join(targetDir, `.registry.json.tmp-${process.pid}-${Date.now()}`);
+  try {
+    fs3.writeFileSync(tmpPath, JSON.stringify(registry, null, 2) + `
+`, { encoding: "utf8", mode: 384 });
+    fs3.renameSync(tmpPath, finalPath);
+  } catch (err2) {
+    try {
+      fs3.rmSync(tmpPath, { force: true });
+    } catch {}
+    throw err2;
+  }
+  try {
+    fs3.chmodSync(finalPath, 384);
+  } catch {}
+  try {
+    fs3.chmodSync(targetDir, 448);
+  } catch {}
+}
+function daemonKey(home, roomKey) {
+  return `${home}#${roomKey}`;
+}
+function upsertDaemonRegistration(home, reg, dir) {
+  const registry = loadMachineRegistry(dir);
+  registry.daemons = { ...registry.daemons, [daemonKey(home, reg.roomKey)]: reg };
+  writeRegistry(dir, registry);
+}
+function removeDaemonRegistration(home, roomKey, dir) {
+  const registry = loadMachineRegistry(dir);
+  const key = daemonKey(home, roomKey);
+  if (!(key in registry.daemons))
+    return;
+  const daemons = { ...registry.daemons };
+  delete daemons[key];
+  registry.daemons = daemons;
+  writeRegistry(dir, registry);
+}
+function parseRoomsFile(raw) {
+  if (typeof raw === "object" && raw !== null && raw.v === 2) {
+    const rawMemberships = raw.memberships;
+    const memberships2 = {};
+    if (typeof rawMemberships === "object" && rawMemberships !== null) {
+      for (const [roomKey, entry] of Object.entries(rawMemberships)) {
+        if (parseRoomKey(roomKey) === null)
+          continue;
+        memberships2[roomKey] = entry;
+      }
+    }
+    return { file: { v: 2, memberships: memberships2 }, wasV1: false };
+  }
+  const memberships = {};
+  if (typeof raw === "object" && raw !== null) {
+    for (const [roomId, entry] of Object.entries(raw)) {
+      if (typeof entry !== "object" || entry === null || typeof entry.url !== "string")
+        continue;
+      const e = entry;
+      memberships[roomKeyFor(normalizeOrigin(e.url), roomId)] = e;
+    }
+  }
+  return { file: { v: 2, memberships }, wasV1: true };
+}
+// ../cli/src/config.ts
+import * as fs5 from "node:fs";
+import * as path5 from "node:path";
+function roomsPath(home) {
+  return path5.join(home ?? meshHome(), "rooms.json");
+}
+function loadRooms(home) {
+  const p = roomsPath(home);
+  if (!fs5.existsSync(p))
+    return { v: 2, memberships: {} };
+  try {
+    fs5.chmodSync(p, 384);
+  } catch {}
+  const raw = JSON.parse(fs5.readFileSync(p, "utf8"));
+  const { file, wasV1 } = parseRoomsFile(raw);
+  if (!wasV1)
+    return file;
+  saveRooms(file, home);
+  const activeRaw = readActiveRoomRaw(home);
+  if (activeRaw !== null) {
+    const migratedKey = Object.keys(file.memberships).find((roomKey) => parseRoomKey(roomKey)?.roomId === activeRaw);
+    if (migratedKey !== undefined)
+      setActiveRoom(migratedKey, home);
+  }
+  return file;
+}
+function saveRooms(rooms, home) {
+  const dir = home ?? meshHome();
+  fs5.mkdirSync(dir, { recursive: true, mode: 448 });
+  const finalPath = roomsPath(home);
+  const tmpPath = path5.join(dir, `.rooms.json.tmp-${process.pid}-${Date.now()}`);
+  try {
+    fs5.writeFileSync(tmpPath, JSON.stringify(rooms, null, 2) + `
+`, { encoding: "utf8", mode: 384 });
+    fs5.renameSync(tmpPath, finalPath);
+  } catch (err2) {
+    try {
+      fs5.rmSync(tmpPath, { force: true });
+    } catch {}
+    throw err2;
+  }
+}
+function findRoomKeysById(rooms, roomId) {
+  const out = [];
+  for (const roomKey of Object.keys(rooms.memberships)) {
+    const parsed = parseRoomKey(roomKey);
+    if (parsed !== null && parsed.roomId === roomId)
+      out.push({ roomKey, origin: parsed.origin });
+  }
+  return out;
+}
+function isRoomIdAmbiguous(roomId, home) {
+  return findRoomKeysById(loadRooms(home), roomId).length > 1;
+}
+function activeRoomPath(home) {
+  return path5.join(home ?? meshHome(), "active_room");
+}
+function readActiveRoomRaw(home) {
+  const p = activeRoomPath(home);
+  if (!fs5.existsSync(p))
+    return null;
+  try {
+    return fs5.readFileSync(p, "utf8").trim() || null;
+  } catch {
+    return null;
+  }
+}
+function setActiveRoom(roomKey, home) {
+  const p = activeRoomPath(home);
+  if (roomKey === null) {
+    try {
+      fs5.rmSync(p, { force: true });
+    } catch {}
+    return;
+  }
+  const dir = home ?? meshHome();
+  fs5.mkdirSync(dir, { recursive: true, mode: 448 });
+  fs5.writeFileSync(p, roomKey + `
+`, { encoding: "utf8", mode: 384 });
 }
 
 // ../cli/src/brief.ts
@@ -16881,18 +17099,18 @@ function buildBriefInput(state, selfId, roles, roomId, room, roleCharters, works
 // src/reanchor.ts
 var LAST_WAKE_FILE = "last_wake.json";
 function isFirstWakeEver(stateDir) {
-  return !existsSync3(join5(stateDir, "wake_cursor.json")) && !existsSync3(join5(stateDir, LAST_WAKE_FILE));
+  return !existsSync5(join7(stateDir, "wake_cursor.json")) && !existsSync5(join7(stateDir, LAST_WAKE_FILE));
 }
 function loadLastWakeTs(stateDir) {
   try {
-    const raw = readFileSync5(join5(stateDir, LAST_WAKE_FILE), "utf8");
+    const raw = readFileSync7(join7(stateDir, LAST_WAKE_FILE), "utf8");
     return JSON.parse(raw).ts;
   } catch {
     return null;
   }
 }
 function stampWakeDelivered(stateDir, ts) {
-  writeFileSync3(join5(stateDir, LAST_WAKE_FILE), JSON.stringify({ ts }));
+  writeFileSync5(join7(stateDir, LAST_WAKE_FILE), JSON.stringify({ ts }));
 }
 function shouldReanchor(brief, lastWakeTs, now) {
   if (!brief.arrival_pointer || brief.reanchor_after_s <= 0)
@@ -16959,12 +17177,12 @@ function createOmpInjector(opts) {
 }
 
 // src/injectors/state.ts
-import { statSync, readFileSync as readFileSync6 } from "node:fs";
+import { statSync, readFileSync as readFileSync8 } from "node:fs";
 var AGENT_STATE_FILE = "agent_state";
 function readHookState(file, busyStaleMs) {
   let raw;
   try {
-    raw = readFileSync6(file, "utf8").trim();
+    raw = readFileSync8(file, "utf8").trim();
   } catch {
     return null;
   }
@@ -17008,12 +17226,12 @@ class HookStateInjector {
 
 // src/ipc.ts
 import { createServer } from "node:net";
-import { existsSync as existsSync5, unlinkSync, statSync as statSync2, chmodSync as chmodSync4 } from "node:fs";
+import { existsSync as existsSync7, unlinkSync, statSync as statSync2, chmodSync as chmodSync6 } from "node:fs";
 import { basename as pathBasename } from "node:path";
 
 // src/fs-shim.ts
 import * as nodePath from "node:path";
-import { writeFileSync as writeFileSync4, chmodSync as chmodSync3, existsSync as existsSync4, realpathSync } from "node:fs";
+import { writeFileSync as writeFileSync6, chmodSync as chmodSync5, existsSync as existsSync6, realpathSync } from "node:fs";
 var FIND_FAIL_LOUD = new Set([
   "-exec",
   "-execdir",
@@ -17352,15 +17570,15 @@ function installShims(binDir, socketPath, workspace) {
   for (const tool of ["ls", "grep", "cat", "find"]) {
     const script = makeShimScript(tool, socketPath, workspace);
     const dest = nodePath.join(binDir, tool);
-    writeFileSync4(dest, script, { encoding: "utf8", mode: 493 });
-    chmodSync3(dest, 493);
+    writeFileSync6(dest, script, { encoding: "utf8", mode: 493 });
+    chmodSync5(dest, 493);
   }
 }
 
 // src/ipc.ts
 function startIpcServer(opts) {
   const { client: client2, socketPath, selfId, roomId, cache } = opts;
-  if (existsSync5(socketPath)) {
+  if (existsSync7(socketPath)) {
     try {
       unlinkSync(socketPath);
     } catch {}
@@ -17382,7 +17600,7 @@ function startIpcServer(opts) {
       socket.destroy();
     });
   });
-  const { promise, resolve: resolve2, reject } = Promise.withResolvers();
+  const { promise, resolve: resolve4, reject } = Promise.withResolvers();
   server.on("error", (err2) => {
     reject(err2);
   });
@@ -17396,7 +17614,7 @@ function startIpcServer(opts) {
       reject(new Error(`[ipc] ${reason}`));
     }
     try {
-      chmodSync4(socketPath, 384);
+      chmodSync6(socketPath, 384);
     } catch (err2) {
       abortServer(`chmod 0600 failed: ${String(err2)}`);
       return;
@@ -17406,7 +17624,7 @@ function startIpcServer(opts) {
       abortServer(`socket mode is ${mode.toString(8)}, expected 0600 — aborting`);
       return;
     }
-    resolve2({
+    resolve4({
       close() {
         return new Promise((res, rej) => {
           server.close((err2) => {
@@ -17491,19 +17709,19 @@ function startIpcServer(opts) {
       const roles = roleFilter !== undefined ? [roleFilter] : myRoles(bindings, selfId ?? "");
       const tree = await cache.ls("charter/");
       const byPath = new Map(tree.map((n) => [normalizeId(n.path), n]));
-      const readSection = async (path4) => {
-        const node = byPath.get(normalizeId(path4));
+      const readSection = async (path6) => {
+        const node = byPath.get(normalizeId(path6));
         if (!node)
-          return { path: path4, content: null, tip_seq: null, author: null };
+          return { path: path6, content: null, tip_seq: null, author: null };
         let content;
         try {
-          content = Buffer.from(await cache.read(path4)).toString("utf8");
+          content = Buffer.from(await cache.read(path6)).toString("utf8");
         } catch (err2) {
-          console.error(`[meshl] room_brief: charter read failed for ${path4}; degrading to no-charter:`, err2);
-          return { path: path4, content: null, tip_seq: null, author: null };
+          console.error(`[meshl] room_brief: charter read failed for ${path6}; degrading to no-charter:`, err2);
+          return { path: path6, content: null, tip_seq: null, author: null };
         }
         const author = await authorOf(client2, node.tip_seq);
-        return { path: path4, content, tip_seq: node.tip_seq, author };
+        return { path: path6, content, tip_seq: node.tip_seq, author };
       };
       const room = await readSection(CHARTER_ROOM_PATH);
       const roleCharters = await Promise.all(roles.map((role) => readSection(charterRolePath(role))));
@@ -18097,8 +18315,8 @@ function getErrorMap() {
 }
 // ../../node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path4, errorMaps, issueData } = params;
-  const fullPath = [...path4, ...issueData.path || []];
+  const { data, path: path6, errorMaps, issueData } = params;
+  const fullPath = [...path6, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -18210,11 +18428,11 @@ var errorUtil;
 
 // ../../node_modules/zod/v3/types.js
 class ParseInputLazyPath {
-  constructor(parent, value, path4, key) {
+  constructor(parent, value, path6, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path4;
+    this._path = path6;
     this._key = key;
   }
   get path() {
@@ -21788,10 +22006,10 @@ function assignProp(target, prop, value) {
     configurable: true
   });
 }
-function getElementAtPath(obj, path4) {
-  if (!path4)
+function getElementAtPath(obj, path6) {
+  if (!path6)
     return obj;
-  return path4.reduce((acc, key) => acc?.[key], obj);
+  return path6.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -22107,11 +22325,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path4, issues) {
+function prefixIssues(path6, issues) {
   return issues.map((iss) => {
     var _a2;
     (_a2 = iss).path ?? (_a2.path = []);
-    iss.path.unshift(path4);
+    iss.path.unshift(path6);
     return iss;
   });
 }
@@ -28825,7 +29043,7 @@ class Protocol {
           return;
         }
         const pollInterval = task2.pollInterval ?? this._options?.defaultTaskPollInterval ?? 1000;
-        await new Promise((resolve2) => setTimeout(resolve2, pollInterval));
+        await new Promise((resolve4) => setTimeout(resolve4, pollInterval));
         options?.signal?.throwIfAborted();
       }
     } catch (error2) {
@@ -28837,7 +29055,7 @@ class Protocol {
   }
   request(request, resultSchema, options) {
     const { relatedRequestId, resumptionToken, onresumptiontoken, task, relatedTask } = options ?? {};
-    return new Promise((resolve2, reject) => {
+    return new Promise((resolve4, reject) => {
       const earlyReject = (error2) => {
         reject(error2);
       };
@@ -28915,7 +29133,7 @@ class Protocol {
           if (!parseResult.success) {
             reject(parseResult.error);
           } else {
-            resolve2(parseResult.data);
+            resolve4(parseResult.data);
           }
         } catch (error2) {
           reject(error2);
@@ -29106,12 +29324,12 @@ class Protocol {
         interval = task.pollInterval;
       }
     } catch {}
-    return new Promise((resolve2, reject) => {
+    return new Promise((resolve4, reject) => {
       if (signal.aborted) {
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
         return;
       }
-      const timeoutId = setTimeout(resolve2, interval);
+      const timeoutId = setTimeout(resolve4, interval);
       signal.addEventListener("abort", () => {
         clearTimeout(timeoutId);
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
@@ -29964,7 +30182,7 @@ class McpServer {
     let task = createTaskResult.task;
     const pollInterval = task.pollInterval ?? 5000;
     while (task.status !== "completed" && task.status !== "failed" && task.status !== "cancelled") {
-      await new Promise((resolve2) => setTimeout(resolve2, pollInterval));
+      await new Promise((resolve4) => setTimeout(resolve4, pollInterval));
       const updatedTask = await extra.taskStore.getTask(taskId);
       if (!updatedTask) {
         throw new McpError(ErrorCode.InternalError, `Task ${taskId} not found during polling`);
@@ -30582,12 +30800,12 @@ class StdioServerTransport {
     this.onclose?.();
   }
   send(message) {
-    return new Promise((resolve2) => {
+    return new Promise((resolve4) => {
       const json = serializeMessage(message);
       if (this._stdout.write(json)) {
-        resolve2();
+        resolve4();
       } else {
-        this._stdout.once("drain", resolve2);
+        this._stdout.once("drain", resolve4);
       }
     });
   }
@@ -30596,7 +30814,7 @@ class StdioServerTransport {
 // src/mcp.ts
 import { connect } from "node:net";
 async function callIpc(socketPath, method, params) {
-  const { promise: promise2, resolve: resolve2, reject } = Promise.withResolvers();
+  const { promise: promise2, resolve: resolve4, reject } = Promise.withResolvers();
   const socket = connect(socketPath);
   let buf = "";
   socket.on("data", (chunk) => {
@@ -30610,7 +30828,7 @@ async function callIpc(socketPath, method, params) {
         if ("error" in resp && resp.error !== undefined) {
           reject(new Error(`IPC error ${resp.error.code}: ${resp.error.message}`));
         } else {
-          resolve2(resp.result);
+          resolve4(resp.result);
         }
       } catch (e) {
         reject(e);
@@ -31165,32 +31383,36 @@ function startDutyLoop(getState, selfId, configRoles, intervalMs, inject, getLea
 }
 
 // src/workset.ts
-import { existsSync as existsSync6, readFileSync as readFileSync7, statSync as statSync3 } from "node:fs";
-import { join as join7 } from "node:path";
+import { existsSync as existsSync8, readFileSync as readFileSync9, statSync as statSync3 } from "node:fs";
+import { join as join9 } from "node:path";
 var CONFLICT_STATES = { diverged: true, "never-synced": true };
 
 class WorksetScanner {
   client;
   roomId;
+  roomKey;
   workspaceRoot;
   intervalMs;
   meshHomeDir;
+  legacyAmbiguous;
   onScanCb;
   hashFile;
   log;
   onError;
   cache = new Map;
   latest = null;
-  warnedNoSidecarDir = false;
+  warnedNoLineage = false;
   _stopRequested = false;
   _wakeUp = null;
   _loopPromise = null;
   constructor(opts) {
     this.client = opts.client;
     this.roomId = opts.roomId;
+    this.roomKey = roomKeyFor(opts.origin, opts.roomId);
     this.workspaceRoot = opts.workspaceRoot;
     this.intervalMs = opts.intervalMs;
     this.meshHomeDir = opts.meshHome ?? meshHome();
+    this.legacyAmbiguous = opts.legacyAmbiguous ?? false;
     this.onScanCb = opts.onScan;
     this.hashFile = opts.hashFile ?? sha256hex;
     this.log = opts.onLog ?? ((line) => console.warn(line));
@@ -31212,9 +31434,9 @@ class WorksetScanner {
     return this.latest;
   }
   async _sleep(ms) {
-    const { promise: promise2, resolve: resolve2 } = Promise.withResolvers();
-    this._wakeUp = resolve2;
-    const handle = setTimeout(resolve2, ms);
+    const { promise: promise2, resolve: resolve4 } = Promise.withResolvers();
+    this._wakeUp = resolve4;
+    const handle = setTimeout(resolve4, ms);
     await promise2;
     clearTimeout(handle);
     this._wakeUp = null;
@@ -31232,15 +31454,18 @@ class WorksetScanner {
     }
   }
   async _tick() {
-    const sidecarDir = join7(this.meshHomeDir, "edit-base", this.roomId);
-    if (!existsSync6(sidecarDir)) {
-      if (!this.warnedNoSidecarDir) {
-        this.log(`[workset] room "${this.roomId}" has no local sync history yet (no edit-base dir) — ` + `skipping tree-diff scan until \`mesh fs get/put/edit\` seeds one`);
-        this.warnedNoSidecarDir = true;
+    const legacyDir = join9(this.meshHomeDir, "edit-base", this.roomId);
+    const folderDir = join9(this.workspaceRoot, FOLDER_STATE_DIR, "lineage", this.roomKey);
+    if (!existsSync8(legacyDir) && !existsSync8(folderDir)) {
+      if (!this.warnedNoLineage) {
+        this.log(`[workset] room "${this.roomId}" has no local sync lineage yet (no folder or legacy edit-base record) — ` + `skipping tree-diff scan until \`mesh fs get/put/edit\` seeds one`);
+        this.warnedNoLineage = true;
       }
+      this.latest = { behind: 0, conflict: 0, scannedAt: Date.now() };
+      this.onScanCb?.(this.latest);
       return;
     }
-    this.warnedNoSidecarDir = false;
+    this.warnedNoLineage = false;
     const treeResult = await this.client.getTree();
     if ("error" in treeResult) {
       this.onError(new Error(`workset: getTree failed: [${treeResult.error}] ${treeResult.detail}`));
@@ -31250,7 +31475,7 @@ class WorksetScanner {
     let conflict = 0;
     for (const row of treeResult.tree) {
       const tipHash = row.content_hash;
-      const sidecar = readSidecar(this.roomId, row.path, this.meshHomeDir);
+      const sidecar = readSidecarResolved(this.workspaceRoot, this.roomKey, this.roomId, row.path, this.meshHomeDir, this.legacyAmbiguous);
       const state = classifySync({
         localHash: this.localHash(row.path),
         baseTipHash: sidecar?.tip_hash,
@@ -31266,7 +31491,7 @@ class WorksetScanner {
     this.onScanCb?.(this.latest);
   }
   localHash(repoPath) {
-    const abs = join7(this.workspaceRoot, repoPath);
+    const abs = join9(this.workspaceRoot, repoPath);
     let st;
     try {
       st = statSync3(abs);
@@ -31282,7 +31507,7 @@ class WorksetScanner {
     if (cached2 && cached2.mtimeMs === st.mtimeMs && cached2.size === st.size) {
       return cached2.hash;
     }
-    const bytes = readFileSync7(abs);
+    const bytes = readFileSync9(abs);
     const hash = "r2:" + this.hashFile(new Uint8Array(bytes));
     this.cache.set(repoPath, { mtimeMs: st.mtimeMs, size: st.size, hash });
     return hash;
@@ -31290,12 +31515,12 @@ class WorksetScanner {
 }
 
 // src/pending-wake.ts
-import { readFileSync as readFileSync8, writeFileSync as writeFileSync5, renameSync as renameSync2, rmSync as rmSync3 } from "node:fs";
-import { join as join8 } from "node:path";
+import { readFileSync as readFileSync10, writeFileSync as writeFileSync7, renameSync as renameSync5, rmSync as rmSync5 } from "node:fs";
+import { join as join10 } from "node:path";
 var PENDING_WAKE_FILE = "pending_wake.json";
 function loadPendingWake(stateDir) {
   try {
-    const raw = JSON.parse(readFileSync8(join8(stateDir, PENDING_WAKE_FILE), "utf8"));
+    const raw = JSON.parse(readFileSync10(join10(stateDir, PENDING_WAKE_FILE), "utf8"));
     if (typeof raw.digest !== "string" || typeof raw.through_seq !== "number")
       return null;
     return raw;
@@ -31304,15 +31529,15 @@ function loadPendingWake(stateDir) {
   }
 }
 function savePendingWake(stateDir, p) {
-  const target = join8(stateDir, PENDING_WAKE_FILE);
+  const target = join10(stateDir, PENDING_WAKE_FILE);
   const tmp = `${target}.tmp`;
-  writeFileSync5(tmp, JSON.stringify(p));
-  renameSync2(tmp, target);
+  writeFileSync7(tmp, JSON.stringify(p));
+  renameSync5(tmp, target);
 }
 function clearPendingWakeIf(stateDir, throughSeq) {
   const current = loadPendingWake(stateDir);
   if (current !== null && current.through_seq <= throughSeq) {
-    rmSync3(join8(stateDir, PENDING_WAKE_FILE), { force: true });
+    rmSync5(join10(stateDir, PENDING_WAKE_FILE), { force: true });
   }
 }
 function durableDeliver(stateDir, deliver, log = (m) => console.error(m)) {
@@ -31443,12 +31668,14 @@ var COMMAND_SPEC = {
   "room join": { flags: ["passphrase", "host"], max: 2, names: ["room-url", "room-or-invite"] },
   "room invite": { flags: ["show", "rotate", "for", "passphrase", "ttl", "list", "revoke"], max: 1, names: ["room_id"] },
   "room list": { flags: [], max: 0, names: [] },
+  rooms: { flags: [], max: 0, names: [] },
   "room rm": { flags: [], max: 1, names: ["room_id"] },
   "room delete": { flags: [], max: 1, names: ["room_id"] },
   "room log": { flags: ["f", "all"], max: 0, names: [] },
   log: { flags: ["f", "all"], max: 0, names: [] },
   chat: { flags: [], max: 0, names: [] },
   open: { flags: ["read-only", "print"], max: 0, names: [] },
+  ui: { flags: ["port", "profile", "print", "no-open"], max: 0, names: [] },
   post: { flags: ["body", "thread"], max: 1, names: ["body"] },
   announce: { flags: ["body", "verdict-by", "claim-window-s", "lease-ttl-s", "max-claim-s", "depends-on"], max: 1, names: ["task_ref"] },
   claim: { flags: ["body", "artifact"], max: 1, names: ["task_ref"] },
@@ -31461,7 +31688,7 @@ var COMMAND_SPEC = {
   fetch: { flags: ["into"], max: 1, names: ["task-or-hash"] },
   "watch task": { flags: [], max: 2, names: ["task_ref", "STATE"] },
   "watch entry": { flags: ["performative", "thread", "mention-me", "path", "participant", "task-ref"], max: 0, names: [] },
-  "fs put": { flags: ["as", "all", "strict", "prune-ignored", "verbose", "v", "stop-on-error"], max: 1, names: ["path"] },
+  "fs put": { flags: ["as", "root", "all", "strict", "prune-ignored", "verbose", "v", "stop-on-error"], max: 1, names: ["path"] },
   "fs ls": { flags: ["f", "into", "root"], max: 1, names: ["prefix"] },
   "fs get": { flags: ["into", "root", "prune"], max: 1, names: ["repopath"] },
   "fs rm": { flags: ["r", "recursive"], max: 1, names: ["repopath"] },
@@ -31544,15 +31771,15 @@ function flagBool(args, name) {
 }
 
 // ../cli/src/version.ts
-import { readFileSync as readFileSync9 } from "node:fs";
-import { dirname as dirname3, resolve as resolve2 } from "node:path";
+import { readFileSync as readFileSync11 } from "node:fs";
+import { dirname as dirname5, resolve as resolve4 } from "node:path";
 import { fileURLToPath } from "node:url";
 function getVersion() {
   if (true)
-    return "1.26.0";
+    return "1.28.0";
   try {
-    const here = dirname3(fileURLToPath(import.meta.url));
-    return readFileSync9(resolve2(here, "../../../VERSION"), "utf8").trim();
+    const here = dirname5(fileURLToPath(import.meta.url));
+    return readFileSync11(resolve4(here, "../../../VERSION"), "utf8").trim();
   } catch {
     return "unknown";
   }
@@ -31613,10 +31840,50 @@ function usage() {
   process.stdout.write(usageText());
 }
 
-// src/main.ts
+// src/daemon-registry.ts
+import { join as join11, resolve as resolve5 } from "node:path";
+import { homedir as homedir3 } from "node:os";
 function resolveHome(p) {
-  return p.startsWith("~/") ? join9(homedir2(), p.slice(2)) : resolve3(p);
+  return p.startsWith("~/") ? join11(homedir3(), p.slice(2)) : resolve5(p);
 }
+function resolveDaemonRoomEntry(config2) {
+  const origin = normalizeOrigin(config2.room.url);
+  const roomKey = roomKeyFor(origin, config2.room.id);
+  const home = config2.home !== undefined ? resolveHome(config2.home) : undefined;
+  return loadRooms(home).memberships[roomKey] ?? null;
+}
+function makeRegisterSelf(home, reg, warn = (msg) => console.warn(msg)) {
+  let warned = false;
+  return () => {
+    try {
+      upsertDaemonRegistration(home, { ...reg, updatedAt: Date.now() });
+    } catch (err2) {
+      if (!warned) {
+        warned = true;
+        warn(`[meshl] machine-registry write failed (non-fatal): ${String(err2)}`);
+      }
+    }
+  };
+}
+function removeDaemonRegistrationBestEffort(home, roomKey, warn = (msg) => console.warn(msg)) {
+  try {
+    removeDaemonRegistration(home, roomKey);
+  } catch (err2) {
+    warn(`[meshl] machine-registry cleanup failed (non-fatal): ${String(err2)}`);
+  }
+}
+function setupDaemonRegistration(config2, configPath, stateDir) {
+  const home = config2.home !== undefined ? resolveHome(config2.home) : meshHome();
+  const origin = normalizeOrigin(config2.room.url);
+  const roomKey = roomKeyFor(origin, config2.room.id);
+  const membershipDefaultRoot = loadRooms(home).memberships[roomKey]?.workspace_root;
+  const workspaceRoot = resolveHome(config2.workspace?.root ?? membershipDefaultRoot ?? ".");
+  const registerSelf = makeRegisterSelf(home, { roomKey, stateDir, configPath: resolve5(configPath), pid: process.pid });
+  const legacyAmbiguous = isRoomIdAmbiguous(config2.room.id, home);
+  return { home, origin, roomKey, workspaceRoot, legacyAmbiguous, registerSelf };
+}
+
+// src/main.ts
 function die(msg) {
   process.stderr.write(msg + `
 `);
@@ -31632,9 +31899,9 @@ function pidAlive(pid) {
 }
 function loadSecretBytes(config2) {
   const keyPath = resolveHome(config2.identity.key);
-  if (!existsSync7(keyPath))
+  if (!existsSync9(keyPath))
     die(`identity key not found: ${keyPath}`);
-  const identityFile = JSON.parse(readFileSync10(keyPath, "utf8"));
+  const identityFile = JSON.parse(readFileSync12(keyPath, "utf8"));
   const secretBytes = new Uint8Array(Buffer.from(identityFile.secret, "base64"));
   return { secretBytes, identityFile };
 }
@@ -31684,21 +31951,21 @@ function livenessOptsFrom(config2, stateDir) {
     intervalMs: config2.liveness.interval_s * 1000,
     stuckAfterMs: config2.liveness.stuck_after_s * 1000,
     debounceMs: config2.liveness.debounce_s * 1000,
-    hookStateFile: config2.wake.tmux ? join9(stateDir, AGENT_STATE_FILE) : null
+    hookStateFile: config2.wake.tmux ? join12(stateDir, AGENT_STATE_FILE) : null
   };
 }
 async function cmdRun(configPath, opts) {
   const config2 = loadConfig(configPath);
   const { secretBytes } = loadSecretBytes(config2);
-  const roomEntry = getRoom(config2.room.id);
+  const roomEntry = resolveDaemonRoomEntry(config2);
   if (!roomEntry)
     die(`no token for room "${config2.room.id}" — run "mesh join" first`);
   const stateDir = resolveHome(config2.state_dir);
-  mkdirSync4(stateDir, { recursive: true, mode: 448 });
+  mkdirSync6(stateDir, { recursive: true, mode: 448 });
   if (!opts.foreground && process.env["MESHL_DETACHED"] !== "1") {
-    const pidPath = join9(stateDir, "daemon.pid");
-    if (existsSync7(pidPath)) {
-      const existing = parseInt(readFileSync10(pidPath, "utf8").trim(), 10);
+    const pidPath = join12(stateDir, "daemon.pid");
+    if (existsSync9(pidPath)) {
+      const existing = parseInt(readFileSync12(pidPath, "utf8").trim(), 10);
       if (Number.isInteger(existing) && pidAlive(existing)) {
         if (!opts.force) {
           die(`meshl already running for this config (pid ${existing}, room ${config2.room.id}).
@@ -31711,14 +31978,14 @@ async function cmdRun(configPath, opts) {
         console.log(`[meshl] replacing running daemon (pid ${existing})`);
       }
     }
-    const logPath = join9(stateDir, "daemon.log");
+    const logPath = join12(stateDir, "daemon.log");
     const out = openSync(logPath, "a");
     const child = spawn(process.execPath, [process.argv[1], "run", "--config", configPath, "--foreground"], {
       detached: true,
       stdio: ["ignore", out, out],
       env: { ...process.env, MESHL_DETACHED: "1" }
     });
-    writeFileSync6(pidPath, `${child.pid}
+    writeFileSync8(pidPath, `${child.pid}
 `, { mode: 384 });
     child.unref();
     console.log(`meshl daemon started — pid ${child.pid}, room ${config2.room.id}`);
@@ -31739,8 +32006,8 @@ async function cmdRun(configPath, opts) {
   const livenessWarn = checkLivenessCadence(config2.liveness);
   if (livenessWarn !== null)
     console.warn(`[meshl] ${livenessWarn}`);
-  const socketPath = join9(stateDir, "daemon.sock");
-  const cache = new WorkspaceCache(join9(stateDir, "fs", config2.room.id), client2);
+  const socketPath = join12(stateDir, "daemon.sock");
+  const cache = new WorkspaceCache(join12(stateDir, "fs", config2.room.id), client2);
   const ipcHandle = await startIpcServer({
     client: client2,
     stateDir,
@@ -31749,19 +32016,25 @@ async function cmdRun(configPath, opts) {
     roomId: config2.room.id,
     cache
   });
+  const { home, origin, roomKey, workspaceRoot, legacyAmbiguous, registerSelf } = setupDaemonRegistration(config2, configPath, stateDir);
   const worksetScanner = config2.workset?.enabled === false ? null : new WorksetScanner({
     client: client2,
     roomId: config2.room.id,
-    workspaceRoot: resolveHome(config2.workspace?.root ?? "."),
-    intervalMs: (config2.workset?.interval_s ?? 15) * 1000
+    origin,
+    workspaceRoot,
+    intervalMs: (config2.workset?.interval_s ?? 15) * 1000,
+    legacyAmbiguous,
+    meshHome: home,
+    onScan: registerSelf
   });
   worksetScanner?.start();
+  registerSelf();
   if (config2.wake.backend === "mcp") {
-    return runPullOnly(config2, client2, stateDir, socketPath, ipcHandle, worksetScanner);
+    return runPullOnly(config2, client2, stateDir, socketPath, ipcHandle, worksetScanner, home, roomKey);
   }
-  return runInjecting(config2, client2, stateDir, socketPath, ipcHandle, worksetScanner, cache);
+  return runInjecting(config2, client2, stateDir, socketPath, ipcHandle, worksetScanner, cache, home, roomKey);
 }
-async function runPullOnly(config2, client2, stateDir, socketPath, ipcHandle, worksetScanner) {
+async function runPullOnly(config2, client2, stateDir, socketPath, ipcHandle, worksetScanner, home, roomKey) {
   const noopInjector = {
     probe: async () => "idle",
     inject: async () => {}
@@ -31778,10 +32051,10 @@ async function runPullOnly(config2, client2, stateDir, socketPath, ipcHandle, wo
     console.error("[meshl] liveness: room gone/unauthorized — stopping monitor:", err2);
   }) : null;
   liveness?.start();
-  const { promise: promise2, resolve: resolve4 } = Promise.withResolvers();
+  const { promise: promise2, resolve: resolve6 } = Promise.withResolvers();
   const shutdown = () => {
     console.log("[meshl] stopping...");
-    resolve4();
+    resolve6();
   };
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
@@ -31791,11 +32064,12 @@ async function runPullOnly(config2, client2, stateDir, socketPath, ipcHandle, wo
   await liveness?.stop();
   await heartbeater.stop();
   await ipcHandle.close();
+  removeDaemonRegistrationBestEffort(home, roomKey);
   console.log("[meshl] stopped");
 }
-async function runInjecting(config2, client2, stateDir, socketPath, ipcHandle, worksetScanner, cache) {
+async function runInjecting(config2, client2, stateDir, socketPath, ipcHandle, worksetScanner, cache, home, roomKey) {
   const rawInjector = buildInjector(config2);
-  const injector = config2.wake.tmux ? new HookStateInjector(rawInjector, config2.wake.tmux.pane, join9(stateDir, AGENT_STATE_FILE), (config2.wake.hook_busy_stale_s ?? 900) * 1000) : rawInjector;
+  const injector = config2.wake.tmux ? new HookStateInjector(rawInjector, config2.wake.tmux.pane, join12(stateDir, AGENT_STATE_FILE), (config2.wake.hook_busy_stale_s ?? 900) * 1000) : rawInjector;
   const deliver = (digest) => deliverWake(config2, client2, injector, stateDir, digest, Date.now());
   if (config2.brief.arrival_pointer && isFirstWakeEver(stateDir)) {
     (async () => {
@@ -31864,9 +32138,9 @@ async function runInjecting(config2, client2, stateDir, socketPath, ipcHandle, w
   const prefetchDeps = {
     cache,
     config: prefetchConfig,
-    canRead: (path4) => canReadForPrefetch(path4),
-    onError: (path4, err2) => {
-      console.error(`[meshl] prefetch warm failed for "${path4}" (cache-only miss — a real read still hydrates it):`, err2);
+    canRead: (path6) => canReadForPrefetch(path6),
+    onError: (path6, err2) => {
+      console.error(`[meshl] prefetch warm failed for "${path6}" (cache-only miss — a real read still hydrates it):`, err2);
     }
   };
   const consumer = new Consumer(consumerClient, config2, onWakeCb, stateDir, config2.identity.id, {}, (kind, err2, consecutive) => {
@@ -31924,26 +32198,27 @@ async function runInjecting(config2, client2, stateDir, socketPath, ipcHandle, w
   await liveness?.stop();
   await heartbeater.stop();
   await ipcHandle.close();
+  removeDaemonRegistrationBestEffort(home, roomKey);
   try {
-    const pidPath = join9(stateDir, "daemon.pid");
-    if (existsSync7(pidPath) && parseInt(readFileSync10(pidPath, "utf8").trim(), 10) === process.pid) {
-      rmSync4(pidPath, { force: true });
+    const pidPath = join12(stateDir, "daemon.pid");
+    if (existsSync9(pidPath) && parseInt(readFileSync12(pidPath, "utf8").trim(), 10) === process.pid) {
+      rmSync6(pidPath, { force: true });
     }
   } catch {}
   console.log("[meshl] stopped");
 }
 async function cmdMcp(stateDir) {
-  const socketPath = join9(stateDir, "daemon.sock");
+  const socketPath = join12(stateDir, "daemon.sock");
   await runMcpStdio(socketPath);
 }
 async function cmdStop(configPath) {
   const config2 = loadConfig(configPath);
   const stateDir = resolveHome(config2.state_dir);
-  const pidPath = join9(stateDir, "daemon.pid");
-  if (!existsSync7(pidPath)) {
+  const pidPath = join12(stateDir, "daemon.pid");
+  if (!existsSync9(pidPath)) {
     die(`no daemon.pid in ${stateDir} — daemon not running? (start: meshl run --config ${configPath})`);
   }
-  const pid = parseInt(readFileSync10(pidPath, "utf8").trim(), 10);
+  const pid = parseInt(readFileSync12(pidPath, "utf8").trim(), 10);
   if (!Number.isInteger(pid))
     die(`invalid pid in ${pidPath}`);
   try {
@@ -31956,7 +32231,7 @@ async function cmdStop(configPath) {
     else
       die(`failed to stop pid ${pid}: ${err2.message}`);
   }
-  rmSync4(pidPath, { force: true });
+  rmSync6(pidPath, { force: true });
 }
 async function cmdValidate(configPath) {
   let config2;
@@ -31976,12 +32251,12 @@ async function cmdValidate(configPath) {
 `);
   };
   const keyPath = resolveHome(config2.identity.key);
-  if (existsSync7(keyPath)) {
+  if (existsSync9(keyPath)) {
     pass(`identity key readable: ${keyPath}`);
   } else {
     fail(`identity key not found: ${keyPath}`);
   }
-  const roomEntry = getRoom(config2.room.id);
+  const roomEntry = resolveDaemonRoomEntry(config2);
   if (roomEntry) {
     pass(`room token found for "${config2.room.id}"`);
   } else {
@@ -32037,18 +32312,18 @@ async function cmdValidate(configPath) {
 async function cmdStatus(configPath) {
   const config2 = loadConfig(configPath);
   const stateDir = resolveHome(config2.state_dir);
-  const cursorPath = join9(stateDir, "wake_cursor.json");
+  const cursorPath = join12(stateDir, "wake_cursor.json");
   let cursorSeq = "none";
-  if (existsSync7(cursorPath)) {
+  if (existsSync9(cursorPath)) {
     try {
-      const raw = JSON.parse(readFileSync10(cursorPath, "utf8"));
+      const raw = JSON.parse(readFileSync12(cursorPath, "utf8"));
       cursorSeq = raw.seq;
     } catch {
       cursorSeq = "unreadable";
     }
   }
   let unwokenGap = "unknown";
-  const roomEntry = getRoom(config2.room.id);
+  const roomEntry = resolveDaemonRoomEntry(config2);
   if (roomEntry) {
     try {
       const { secretBytes } = loadSecretBytes(config2);
@@ -32067,9 +32342,9 @@ async function cmdStatus(configPath) {
   let hookState = "n/a";
   if (config2.wake.backend === "tmux" && config2.wake.tmux) {
     const staleMs = (config2.wake.hook_busy_stale_s ?? 900) * 1000;
-    const stateFile = join9(stateDir, AGENT_STATE_FILE);
+    const stateFile = join12(stateDir, AGENT_STATE_FILE);
     try {
-      const raw = readFileSync10(stateFile, "utf8").trim();
+      const raw = readFileSync12(stateFile, "utf8").trim();
       const ageS = Math.round((Date.now() - statSync4(stateFile).mtimeMs) / 1000);
       hookState = raw === "busy" && ageS * 1000 > staleMs ? `busy (age ${ageS}s — STALE > ${Math.round(staleMs / 1000)}s, ignored → scrape)` : `${raw} (age ${ageS}s)`;
     } catch {
@@ -32105,17 +32380,17 @@ async function cmdPoke(configPath, opts = { brief: false }) {
   const stateDir = resolveHome(config2.state_dir);
   let depth = "?";
   let client2 = null;
-  const roomEntry = getRoom(config2.room.id);
+  const roomEntry = resolveDaemonRoomEntry(config2);
   if (roomEntry) {
     try {
       const { secretBytes } = loadSecretBytes(config2);
       client2 = buildClient(config2, secretBytes, roomEntry.token);
       const state = await client2.getState();
-      const cursorPath = join9(stateDir, "wake_cursor.json");
+      const cursorPath = join12(stateDir, "wake_cursor.json");
       let cursorNum = -1;
-      if (existsSync7(cursorPath)) {
+      if (existsSync9(cursorPath)) {
         try {
-          cursorNum = JSON.parse(readFileSync10(cursorPath, "utf8")).seq;
+          cursorNum = JSON.parse(readFileSync12(cursorPath, "utf8")).seq;
         } catch {}
       }
       depth = String(Math.max(0, state.head.seq - cursorNum));
@@ -32134,9 +32409,9 @@ async function cmdPoke(configPath, opts = { brief: false }) {
 async function cmdExec(opts) {
   const resolvedWorkspace = resolveHome(opts.workspace);
   const resolvedStateDir = resolveHome(opts.stateDir);
-  const binDir = join9(resolvedStateDir, "shims");
-  const socketPath = join9(resolvedStateDir, "daemon.sock");
-  mkdirSync4(binDir, { recursive: true, mode: 448 });
+  const binDir = join12(resolvedStateDir, "shims");
+  const socketPath = join12(resolvedStateDir, "daemon.sock");
+  mkdirSync6(binDir, { recursive: true, mode: 448 });
   installShims(binDir, socketPath, resolvedWorkspace);
   const childEnv = buildExecEnv({
     binDir,
@@ -32160,7 +32435,7 @@ async function cmdExec(opts) {
   });
 }
 function cmdHooks(stateDir, runtime) {
-  const file = join9(stateDir, AGENT_STATE_FILE);
+  const file = join12(stateDir, AGENT_STATE_FILE);
   if (runtime === "omp") {
     process.stderr.write(`# Oh My Pi (omp) idle/busy hook. Save it, then launch the agent with --hook:
 ` + `#   meshl hooks --runtime omp --state-dir ${stateDir} > ~/mesh-agent/state-hook.ts

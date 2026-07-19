@@ -3,6 +3,136 @@
 All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.28.0] — 2026-07-18
+
+### Added
+
+- **`mesh ui` — the local multiroom manager** (Intent V, `CONTEXT.md §28`).
+  The CLI launches a dependency-free `node:http` broker bound to `127.0.0.1`
+  and serves its own same-origin browser SPA. The sidebar keeps the inventory
+  machine-wide, groups memberships by profile and identity, and makes the
+  selected acting identity explicit. `mesh ui [--port <n>] [--profile <name>]
+  [--print] [--no-open]` opens the manager by default; `--profile` initially
+  selects that profile's active membership (or its first membership), never
+  filters the list.
+- The manager places room truth and machine truth side by side: the room pane
+  shows the file tree, live conversation, and composer; the local pane shows
+  the same sync classification as `mesh fs status` plus persisted daemon
+  registration/liveness, wake cursor, pending wake, and hook state when
+  available. The broker resolves and signs with the selected membership's
+  local identity; identity keys, bearer tokens, and join secrets never enter
+  browser JavaScript.
+- Manager sessions use a one-time launch token from the URL fragment, exchanged
+  for an in-memory `HttpOnly`/`SameSite=Strict` cookie. Host, Origin,
+  `X-Mesh-UI`, and cookie guards protect the localhost API; any API `401`
+  replaces the page with “Session ended — run mesh ui again.” Binding to
+  loopback makes off-machine access impossible. The launch token/session
+  protects localhost access; same-machine process or URL snooping remains
+  outside the current threat model. The existing single-room `mesh open` page
+  and its URL-fragment identity flow are unchanged and coexist with the manager.
+- **`@mesh/web-core`** — a new internal workspace package extracted from the
+  room page's browser modules. The room page and manager now share the same
+  no-framework DOM/rendering, feed, composer, tree, formatting, buffer shim,
+  and CSS vocabulary. Feed and composer depend on a structural `RoomClient`,
+  implemented by both the room page's `MeshClient` and the manager's
+  credential-free broker proxy.
+
+### Fixed
+
+- The manager's live feed now backfills past the room server's 100-entry page
+  cap: an SSE reconnect (or first load of a long room) pages `GET /entries`
+  until it reaches the live stream, delivering every sequence exactly once
+  instead of silently dropping everything after the first page.
+- Broker-side post failures (unknown membership, identity mismatch, invalid
+  body, resolution errors) now reach the composer as their real sanitized
+  detail instead of a generic "invalid broker response"; local-pane copy no
+  longer labels room-side status failures as local workspace failures.
+- The room pane is a proper flex column, so long conversations scroll inside
+  the feed and the composer stays reachable after a large backfill.
+- Same room id joined on two origins from one home: the manager's status scan
+  no longer consults the other origin's legacy sync records, and membership
+  resolution is proven to select the exact origin-qualified credential.
+- `mesh room create/join --home <relative-path>` now registers the absolute
+  home path, so `mesh rooms` and `mesh ui` find that membership from any
+  working directory.
+
+### Changed
+
+- The root workspace list now includes `packages/web-core`; release versions
+  for the root, CLI, and daemon packages advance together to `1.28.0`
+  (`@mesh/web-core` remains internal at `0.0.0`).
+
+## [1.27.0] — 2026-07-18
+
+### Added
+
+- **`mesh rooms`** (Intent T — "the machine knows its rooms"): a machine-wide,
+  offline inventory of every room membership across every local profile/identity
+  home, each shown under the identity that holds it. Backed by a new SLIM
+  per-OS-user registry (`~/.mesh/machine/registry.json` — the homes this
+  machine knows about and any live daemons, never a membership mirror, never
+  tokens/keys/secrets) plus a `scanMachineInventory` scan of each home's own
+  `rooms.json`, which `mesh room create/join/rm/delete` and `mesh fs
+  get/put/hydrate/edit` populate ambiently — no rebuild command. Sibling
+  `.mesh`/`.mesh-*` home directories are only auto-discovered in production
+  (a test harness's `MESH_HOME_ROOT` opts out of that scan, so ad-hoc test
+  homes self-register via the registry instead of leaking sibling tmpdirs into
+  the inventory). A corrupt or missing registry still finds default and
+  named-profile homes by convention; only genuinely ad-hoc `--home` homes go
+  missing until next use, flagged with a "rebuilding" hint, never a lie.
+- **`rooms.json` v2**: room credentials are now keyed by `roomKey`
+  (`roomKeyFor(origin, roomId)`) instead of a bare room id, so the same room
+  id joined on two different origins is two independent, never-colliding
+  memberships. Existing `rooms.json` files migrate lazily and losslessly on
+  first read (atomic write-back); `mesh room rm`, `mesh room delete`, and
+  `resolveRoom`'s other room-scoped callers (invite, log, chat, post,
+  announce, claim/accept/reject/complete/release, ack, deliver, fetch, `fs`,
+  decide, doctor, state, watch, inbox, brief, open) refuse on ambiguity and
+  name both origins plus the `--url <origin>` disambiguator. (`mesh key
+  rotate`/`mesh key retire` don't yet accept `--url` and still resolve by
+  bare room id — a known gap, not a regression, tracked for a follow-up.)
+- **Folder-owned sync lineage** (Intent U — "one folder, one truth"): `fs
+  get`/`put`/`hydrate`/`edit`/`status` and `mesh doctor` now read/write their
+  sync-base ("sidecar") records under `<workspace-root>/.mesh/lineage/
+  <roomKey>/`, shared by every profile that syncs the same folder to the same
+  room, instead of the old per-`MESH_HOME` `edit-base/<room_id>/` store. A
+  folder with pre-existing per-profile sync history classifies exactly as
+  before via a read-only legacy fallback (lossless migration) until its first
+  folder-scoped write; orphan legacy-only records stay visible in
+  `status`/`doctor` output via a deduped union of both stores — unless the
+  room id is joined on more than one origin under that `MESH_HOME`, in which
+  case the bare-roomId-keyed legacy store can't be trusted to belong to this
+  origin's history and is skipped entirely rather than risk a false merge.
+- `fs get`/`put`/`hydrate`/`edit` now resolve their workspace root through
+  `--root`/`--into` flag → nearest ancestor with a matching `.mesh/
+  attachments.json` entry → the current working directory, attached on first
+  use — never a stored default (a second checkout must never be silently
+  re-anchored away from where the operator stands), and never `$HOME` or any
+  `MESH_HOME` directory. `fs status`/`mesh doctor` resolve through the same
+  two legs plus this profile's registered default attachment for the room,
+  then refuse, naming every leg tried, rather than silently scanning the
+  wrong folder with false confidence.
+- `meshl run` registers `{roomKey, stateDir, configPath, pid}` in the machine
+  registry on start (best-effort — a registry-write failure never blocks
+  daemon start/stop), re-upserts it every `workset` scan tick (self-heals a
+  lost update within one interval since the registry read-modify-write has no
+  cross-process lock), and clears it on graceful exit — foundation for a
+  future local manager to discover running daemons without scanning the
+  filesystem.
+
+### Fixed
+
+- `meshl`'s `getRoom(config.room.id)` lookup now honors a new optional
+  `mesh.yml` `home:` field, closing a token/home mismatch: a daemon configured
+  with a non-default `identity.key` path previously still resolved its room
+  token against the ambient `MESH_HOME` default, silently missing it whenever
+  the two diverged. The daemon resolves its token by the exact `roomKey`
+  (never a bare-id fallback that could pick the wrong origin's token).
+- `edit-base.ts`'s sidecar `writeSidecar` is now an atomic tmp-file + rename,
+  matching `identity.json`'s existing crash-safety pattern — a crash or power
+  loss mid-write can no longer leave a truncated sidecar that silently
+  discarded a merge base.
+
 ## [1.26.0] — 2026-07-17
 
 ### Added
