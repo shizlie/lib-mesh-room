@@ -16949,6 +16949,28 @@ function parseRoomsFile(raw) {
   }
   return { file: { v: 2, memberships }, wasV1: true };
 }
+// ../engine/src/promise-with-resolvers.ts
+function withResolversPolyfill() {
+  let resolvePromise;
+  let rejectPromise;
+  const promise = new Promise((resolve3, reject) => {
+    resolvePromise = resolve3;
+    rejectPromise = reject;
+  });
+  if (resolvePromise === undefined || rejectPromise === undefined) {
+    throw new Error("Promise executor did not initialize synchronously");
+  }
+  return { promise, resolve: resolvePromise, reject: rejectPromise };
+}
+function installPromiseWithResolvers() {
+  if (typeof Promise.withResolvers === "function")
+    return;
+  Object.defineProperty(Promise, "withResolvers", {
+    configurable: true,
+    writable: true,
+    value: withResolversPolyfill
+  });
+}
 // ../cli/src/config.ts
 import * as fs6 from "node:fs";
 import * as path6 from "node:path";
@@ -31776,7 +31798,7 @@ import { dirname as dirname5, resolve as resolve4 } from "node:path";
 import { fileURLToPath } from "node:url";
 function getVersion() {
   if (true)
-    return "1.28.1";
+    return "1.28.2";
   try {
     const here = dirname5(fileURLToPath(import.meta.url));
     return readFileSync11(resolve4(here, "../../../VERSION"), "utf8").trim();
@@ -31884,6 +31906,7 @@ function setupDaemonRegistration(config2, configPath, stateDir) {
 }
 
 // src/main.ts
+installPromiseWithResolvers();
 function die(msg) {
   process.stderr.write(msg + `
 `);

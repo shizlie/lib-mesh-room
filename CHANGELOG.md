@@ -5,6 +5,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [1.28.2] — 2026-07-20
+
 ### Changed
 
 - File-plane commands now treat a normal project folder as the workspace root:
@@ -19,6 +21,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Manager launch-token exchange now consumes a fresh token before falling back
+  to an existing valid session cookie, so stale or malformed launch URLs no
+  longer replace a healthy manager with the ended-session page while one-time
+  token replay protection remains intact.
+- The prebuilt `mesh` and `meshl` bundles now install the standardized
+  `Promise.withResolvers()` contract on Node 18, restoring manager request-body
+  parsing and daemon async paths on the documented runtime floor.
 - Reserved local state cannot cross the room boundary: `fs put` and directory
   deliveries always exclude `.mesh`/`.meshignore`, room writes reject those
   paths, hydration refuses both reserved room paths and a reserved destination
@@ -79,8 +88,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   browser JavaScript.
 - Manager sessions use a one-time launch token from the URL fragment, exchanged
   for an in-memory `HttpOnly`/`SameSite=Strict` cookie. Host, Origin,
-  `X-Mesh-UI`, and cookie guards protect the localhost API; any API `401`
-  replaces the page with “Session ended — run mesh ui again.” Binding to
+  `X-Mesh-UI`, and cookie guards protect the localhost API; any authenticated
+  API `401` (the one-time `/api/session` exchange itself is best-effort and
+  ignored) replaces the page with “Session ended — run mesh ui again.” Binding
   loopback makes off-machine access impossible. The launch token/session
   protects localhost access; same-machine process or URL snooping remains
   outside the current threat model. The existing single-room `mesh open` page
